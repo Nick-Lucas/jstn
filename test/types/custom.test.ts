@@ -35,9 +35,9 @@ describe("Money", () => {
     expect(value).toStrictEqual(new Money("12.50", "GBP"))
   })
 
-  it("is named by its spec", () => {
-    expect(money.name).toBe("Money")
-    expect(note.name).toBe("Note")
+  it("is named by the identifier for its tag", () => {
+    expect(money.name).toBe("money")
+    expect(note.name).toBe("note")
   })
 })
 
@@ -68,24 +68,24 @@ describe("Note payloads through text", () => {
 describe("decode failures", () => {
   it("rejects the wrong tag", () => {
     const error = fails(() => money.decode({ kind: "tagged", tag: "Note", payload: "x", pos }, ["price"]))
-    expect(error.message).toBe("$.price: expected Money, got Note (line 2, column 10)")
+    expect(error.message).toBe("$.price: expected money, got Note (line 2, column 10)")
   })
 
   it("rejects a non-tagged node", () => {
     const error = fails(() => money.decode({ kind: "string", value: "12.50 GBP", pos }, ["price"]))
-    expect(error.message).toBe("$.price: expected Money, got string \"12.50 GBP\" (line 2, column 10)")
+    expect(error.message).toBe("$.price: expected money, got string \"12.50 GBP\" (line 2, column 10)")
   })
 
   it("wraps an Error thrown by parse and keeps the cause", () => {
     const error = fails(() => money.decode({ kind: "tagged", tag: "Money", payload: "abc", pos }, ["price"]))
-    expect(error.message).toBe("$.price: invalid Money \"abc\": expected \"<amount> <CCY>\" (line 2, column 10)")
+    expect(error.message).toBe("$.price: invalid money \"abc\": expected \"<amount> <CCY>\" (line 2, column 10)")
     expect(error.cause).toBeInstanceOf(Error)
     expect((error.cause as Error).message).toBe("expected \"<amount> <CCY>\"")
   })
 
   it("escapes U+007F in the payload label", () => {
     const error = fails(() => money.decode({ kind: "tagged", tag: "Money", payload: "x\u007fy", pos }, []))
-    expect(error.message).toBe("$: invalid Money \"x\\u007fy\": expected \"<amount> <CCY>\" (line 2, column 10)")
+    expect(error.message).toBe("$: invalid money \"x\\u007fy\": expected \"<amount> <CCY>\" (line 2, column 10)")
   })
 
   it("wraps a non-Error thrown by parse", () => {
@@ -95,14 +95,14 @@ describe("decode failures", () => {
       },
     })
     const error = fails(() => type.decode({ kind: "tagged", tag: "Money", payload: "x y", pos }, []))
-    expect(error.message).toBe("$: invalid Money \"x y\": nope (line 2, column 10)")
+    expect(error.message).toBe("$: invalid money \"x y\": nope (line 2, column 10)")
     expect(error.cause).toBe("nope")
   })
 
   it("rejects a parse result that match refuses", () => {
     const type = moneyWith({ parse: () => ({ amount: "1", currency: "GBP" }) })
     const error = fails(() => type.decode({ kind: "tagged", tag: "Money", payload: "1 GBP", pos }, ["price"]))
-    expect(error.message).toBe("$.price: invalid Money \"1 GBP\": parse result rejected by match (line 2, column 10)")
+    expect(error.message).toBe("$.price: invalid money \"1 GBP\": parse result rejected by match (line 2, column 10)")
   })
 
   it("lets a non-JSTNError from match propagate", () => {
@@ -118,8 +118,8 @@ describe("decode failures", () => {
 describe("encode failures", () => {
   it("rejects a value that match refuses", () => {
     const error = fails(() => money.encode("12.50 GBP", ["price"]))
-    expect(error.message).toBe("$.price: expected Money, got string \"12.50 GBP\"")
-    expect(fails(() => money.encode(new Note("x"), [])).message).toBe("$: expected Money, got Note")
+    expect(error.message).toBe("$.price: expected money, got string \"12.50 GBP\"")
+    expect(fails(() => money.encode(new Note("x"), [])).message).toBe("$: expected money, got Note")
   })
 
   it("wraps a throwing stringify", () => {
@@ -130,19 +130,19 @@ describe("encode failures", () => {
       },
     })
     const error = fails(() => JSTN.validate({ c: new Money("1", "GBP") }, { c: type }))
-    expect(error.message).toBe("$.c: cannot stringify Money: boom")
+    expect(error.message).toBe("$.c: cannot stringify money: boom")
     expect(error.cause).toBe(cause)
     expect(error.line).toBeUndefined()
   })
 
   it("rejects a stringify result that is not a string", () => {
     const type = moneyWith({ stringify: () => 12 as unknown as string })
-    expect(fails(() => type.encode(new Money("1", "GBP"), ["c"])).message).toBe("$.c: cannot stringify Money: stringify must return a string")
+    expect(fails(() => type.encode(new Money("1", "GBP"), ["c"])).message).toBe("$.c: cannot stringify money: stringify must return a string")
   })
 })
 
 describe("name validation", () => {
-  it.each(["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint", "", "a b", "1x", "é", "a-b", "Money()"])(
+  it.each(["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint", "", "a b", "1x", "é", "a-b", "Money()", "Number", "NUMBER", "String", "Boolean", "Null", "True", "False"])(
     "rejects %o",
     (name) => {
       const error = fails(() => moneyWith({ name }))
@@ -150,8 +150,20 @@ describe("name validation", () => {
     },
   )
 
-  it.each(["Date", "Set", "Map", "_x", "$y", "Money2"])("accepts %o", (name) => {
-    expect(moneyWith({ name }).name).toBe(name)
+  it.each([
+    ["Date", "date"],
+    ["Set", "set"],
+    ["Map", "map"],
+    ["_x", "_x"],
+    ["$y", "$y"],
+    ["Money2", "money2"],
+    ["URL", "url"],
+    ["JSONValue", "jsonValue"],
+    ["BigInt", "bigInt"],
+  ])("accepts %o and names it %o", (name, identifier) => {
+    const type = moneyWith({ name })
+    expect(type.name).toBe(identifier)
+    expect(type.encode(new Money("1", "GBP"), [])).toStrictEqual({ kind: "tagged", tag: name, payload: "1" })
   })
 })
 
@@ -165,17 +177,17 @@ describe("createType with a class name", () => {
   const point = createType({ name: Point, parse: (text) => new Point(Number(text)), stringify: (p) => String(p.x) })
 
   it("takes its tag from the class and matches instances by default", () => {
-    expect(point.name).toBe("Point")
+    expect(point.name).toBe("point")
     expect(JSTN.stringify(new Point(3), point)).toBe("Point(3)")
     expect(JSTN.parse("Point(4)", point)).toStrictEqual(new Point(4))
-    expect(fails(() => JSTN.stringify({ x: 1 }, point)).message).toBe("$: expected Point, got object")
+    expect(fails(() => JSTN.stringify({ x: 1 }, point)).message).toBe("$: expected point, got object")
   })
 
   it("lets an explicit match override the default", () => {
     const positive = createType({ name: Point, match: (v) => v instanceof Point && v.x > 0, parse: (text) => new Point(Number(text)), stringify: (p) => String(p.x) })
     expect(JSTN.is(new Point(1), positive)).toBe(true)
     expect(JSTN.is(new Point(-1), positive)).toBe(false)
-    expect(fails(() => JSTN.parse("Point(-1)", positive)).message).toBe("$: invalid Point \"-1\": parse result rejected by match (line 1, column 1)")
+    expect(fails(() => JSTN.parse("Point(-1)", positive)).message).toBe("$: invalid point \"-1\": parse result rejected by match (line 1, column 1)")
   })
 
   it("rejects an anonymous class", () => {

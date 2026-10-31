@@ -4,7 +4,7 @@ import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
 
 export function tuple<const T extends readonly Schema[]>(...items: T): Type<{ -readonly [K in keyof T]: Infer<T[K]> }> {
   const types = items.map((item, i) => toType(item, [i]))
-  const name = `[${types.map((t) => t.name).join(", ")}]`
+  const name = `tuple(${types.map((t) => t.name).join(", ")})`
   const count = `${types.length} items`
   return defineType(
     name,

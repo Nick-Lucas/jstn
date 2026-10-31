@@ -1,9 +1,9 @@
+import { identifierFor } from "../core/strings.ts"
 import { checkDepth, describeNode, describeValue, guard, mismatch } from "../core/error.ts"
 import { toType } from "../core/schema.ts"
 import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
 import { resolveNamed, type Named } from "./custom.ts"
 import { tuple } from "./tuple.ts"
-import { isUnion } from "./union.ts"
 
 export type CollectionSpec<A, I, C> = Named<unknown> & {
   readonly items: A
@@ -41,8 +41,7 @@ function identity<T>(value: T): T {
 
 export function array<S extends Schema>(item: S): Type<Infer<S>[]> {
   const type = toType(item)
-  const name = isUnion(type) ? `(${type.name})[]` : `${type.name}[]`
-  return listType<Infer<S>[], Infer<S>>(null, name, type, { match: Array.isArray, toItems: identity, fromItems: identity })
+  return listType<Infer<S>[], Infer<S>>(null, `array(${type.name})`, type, { match: Array.isArray, toItems: identity, fromItems: identity })
 }
 
 export function createCollection<const A extends readonly [Schema, ...Schema[]], C>(spec: CollectionSpec<A, InferAll<A>, C>): Type<C>
@@ -52,7 +51,7 @@ export function createCollection(spec: CollectionSpec<Schema | readonly Schema[]
   const many = isSchemaList(spec.items)
   const args = (many ? spec.items : [spec.items]).map((item) => toType(item))
   const item = many ? tuple(...args) : args[0]!
-  const name = `${tag}<${args.map((arg) => arg.name).join(", ")}>`
+  const name = `${identifierFor(tag)}(${args.map((arg) => arg.name).join(", ")})`
   return listType(tag, name, item, { match, toItems: (value) => spec.toItems(value), fromItems: (items) => spec.fromItems(items) })
 }
 

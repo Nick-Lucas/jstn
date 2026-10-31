@@ -103,23 +103,23 @@ describe("rejected payloads", () => {
     ["+999999-01-01", "outside the Date range"],
   ])("rejects %o", (payload, why) => {
     const error = fails(() => date.decode({ kind: "tagged", tag: "Date", payload, pos: { line: 1, column: 5 } }, ["d"]))
-    expect(error.message).toBe(`$.d: invalid Date ${JSON.stringify(payload)}: ${why} (line 1, column 5)`)
+    expect(error.message).toBe(`$.d: invalid date ${JSON.stringify(payload)}: ${why} (line 1, column 5)`)
   })
 
   it("rejects a node with another tag or kind", () => {
     expect(fails(() => date.decode({ kind: "string", value: "2026-01-01" }, ["someDate"])).message).toBe(
-      "$.someDate: expected Date, got string \"2026-01-01\"",
+      "$.someDate: expected date, got string \"2026-01-01\"",
     )
-    expect(fails(() => date.decode({ kind: "tagged", tag: "Money", payload: "1 GBP" }, [])).message).toBe("$: expected Date, got Money")
+    expect(fails(() => date.decode({ kind: "tagged", tag: "Money", payload: "1 GBP" }, [])).message).toBe("$: expected date, got Money")
   })
 })
 
 describe("encode", () => {
   it.each([
-    [new Date(Number.NaN), "$: expected Date, got invalid Date"],
-    ["2026-01-01", "$: expected Date, got string \"2026-01-01\""],
-    [0, "$: expected Date, got number 0"],
-    [{}, "$: expected Date, got object"],
+    [new Date(Number.NaN), "$: expected date, got invalid Date"],
+    ["2026-01-01", "$: expected date, got string \"2026-01-01\""],
+    [0, "$: expected date, got number 0"],
+    [{}, "$: expected date, got object"],
   ])("rejects %o", (value, message) => {
     expect(fails(() => date.encode(value, [])).message).toBe(message)
   })

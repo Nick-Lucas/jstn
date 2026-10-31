@@ -4,10 +4,6 @@ import { defineType, type Infer, type Path, type Schema, type Type } from "../co
 
 const UNIONS = new WeakMap<Type<unknown>, readonly Type<unknown>[]>()
 
-export function isUnion(type: Type<unknown>): boolean {
-  return UNIONS.has(type)
-}
-
 function deepest(errors: readonly JSTNError[], path: Path): JSTNError | undefined {
   const root = formatPath(path)
   let best: JSTNError | undefined
@@ -36,7 +32,7 @@ export function union<const T extends readonly [Schema, Schema, ...Schema[]]>(..
     return UNIONS.get(type) ?? [type]
   })
   if (types.length < 2) throw new JSTNError("union() needs at least 2 members", [])
-  const name = types.map((t) => t.name).join(" | ")
+  const name = `union(${types.map((t) => t.name).join(", ")})`
   const type = defineType(
     name,
     (value, path) => firstSuccess(types, path, (t) => t.encode(value, path), () => mismatch(name, describeValue(value), path)),

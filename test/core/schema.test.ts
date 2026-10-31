@@ -67,16 +67,16 @@ describe("JSTN.schema", () => {
 
   it("normalises nested literals recursively", () => {
     const type = JSTN.schema({ a: { b: { c: Date } }, n: null })
-    expect(type.name).toBe("{ a: { b: { c: Date } }, n: null }")
+    expect(type.name).toBe("{ a: { b: { c: date } }, n: null }")
     expect(JSTN.is({ a: { b: { c: new Date(0) } }, n: null }, type)).toBe(true)
-    expect(fails(() => JSTN.validate({ a: { b: { c: 1 } }, n: null }, type)).message).toBe("$.a.b.c: expected Date, got number 1")
+    expect(fails(() => JSTN.validate({ a: { b: { c: 1 } }, n: null }, type)).message).toBe("$.a.b.c: expected date, got number 1")
   })
 })
 
 describe("optional", () => {
   it("makes a shape field optional", () => {
     const type = JSTN.schema({ a: Number, b: optional(String) })
-    expect(type.name).toBe("{ a: number, b?: string }")
+    expect(type.name).toBe("{ a: number, b: optional(string) }")
     expect(JSTN.is({ a: 1 }, type)).toBe(true)
     expect(JSTN.is({ a: 1, b: "x" }, type)).toBe(true)
     expect(JSTN.is({ a: 1, b: 2 }, type)).toBe(false)
@@ -120,6 +120,12 @@ describe("rejections", () => {
   it("rejects a duck-typed Type as a shape", () => {
     const duck = { name: "number", encode() {}, decode() {} }
     expect(fails(() => JSTN.schema(loose(duck))).message).toBe("$.name: not a schema: string \"number\"")
+  })
+
+  it("rejects an object whose prototype is a Type instead of treating it as that Type", () => {
+    const literal = loose({ a: string, __proto__: number })
+    expect(fails(() => JSTN.schema(literal)).message).toBe("$: not a schema: Object")
+    expect(fails(() => JSTN.schema(loose(Object.create(optional(number))))).message).toBe("$: not a schema: Object")
   })
 })
 

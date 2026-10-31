@@ -55,11 +55,13 @@ The collection type comes from what `fromItems` returns, so write `fromItems` be
 
 `match` cannot carry the item type: `v instanceof SortedSet` only tells TypeScript `SortedSet<any>`. TypeScript also cannot apply a generic class to a type argument by itself. So a generic collection is a generic function that calls `createCollection`, and the function's type parameter carries the item type into `fromItems` and `toItems`.
 
-When `items` is an array, each item is a tuple and the collection takes one type argument per element, as in `Map<string, number>`.
+When `items` is an array, each item is a tuple and the collection takes one argument per element, as in `map(string, number)`.
 
 ## Names
 
-A `createType` or `createCollection` name must be an identifier other than `true`, `false`, `null`, `NaN`, `Infinity`, `number`, `string`, `boolean` and `bigint`. An anonymous class therefore fails.
+A `createType` or `createCollection` name is the tag used in data, such as `Money` in `Money(12.50 GBP)`. It must be an identifier other than `true`, `false`, `null`, `NaN`, `Infinity`, `number`, `string`, `boolean` and `bigint`, and its camelCase form must not be one of those either. An anonymous class therefore fails.
+
+The type's `name`, which schema text and error messages use, is the tag in camelCase: `Money` becomes `money`, `SortedSet` becomes `sortedSet`, and `URL` becomes `url`. Name the variable that holds the type the same way, so that schema text pastes into your code unchanged.
 
 ## Errors
 
@@ -79,8 +81,8 @@ Errors from `parse` and `parseSchema` have a position. Errors from `stringify`, 
 $.someArr[2]: expected number, got string "x" (line 6, column 16)
 $.someObj: missing required key "inner" (line 4, column 12)
 $.d: expected "(" or "[" immediately after tag "Date" (line 1, column 5)
-$.price: invalid Money "abc": expected "<amount> <CCY>" (line 2, column 10)
-$: unknown type "User" (line 3, column 10)
+$.price: invalid money "abc": expected "<amount> <CCY>" (line 2, column 10)
+$: unknown type "user" (line 3, column 10)
 ```
 
 Paths start at `$`. Identifier keys are written `.key`, other keys `["key"]`, and indexes `[i]`. Map entries use `[i][0]` for the key and `[i][1]` for the value. Lines and columns start at 1, and columns count UTF-16 code units. A byte order mark at the start is skipped and takes no column.

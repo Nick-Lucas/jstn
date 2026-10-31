@@ -10,12 +10,12 @@ JSTN data looks like JavaScript literals. This schema and document use every dat
   ratio: number,
   offset: number,
   big: bigint,
-  created: Date,
-  tags: Set<string>,
-  scores: Map<string, number>,
-  price: Money,
-  note: Note,
-  ranks: SortedSet<number>,
+  created: date,
+  tags: set(string),
+  scores: map(string, number),
+  price: money,
+  note: note,
+  ranks: sortedSet(number),
 }
 ```
 
@@ -78,9 +78,9 @@ Object entries follow schema order, and `Set` and `Map` items follow insertion o
 ```jstn-schema
 {
   someObj: { inner: boolean },
-  someArr: number[],
-  lookup: Map<string, { a: number }>,
-  "key with space"?: string,
+  someArr: array(number),
+  lookup: map(string, { a: number }),
+  "key with space": optional(string),
 }
 ```
 

@@ -87,7 +87,7 @@ describe("element errors", () => {
 
   it("rejects a tagged list", () => {
     const error = fails(() => type.decode({ kind: "list", tag: "Set", items: [], pos }, ["t"]))
-    expect(error.message).toBe("$.t: expected [number, string], got Set (line 1, column 5)")
+    expect(error.message).toBe("$.t: expected tuple(number, string), got Set (line 1, column 5)")
   })
 
   it.each([
@@ -95,7 +95,7 @@ describe("element errors", () => {
     ["a Set", new Set([1, "x"]), "Set"],
     ["an object", { 0: 1, 1: "x" }, "object"],
   ])("rejects %s on encode", (_, value, got) => {
-    expect(fails(() => type.encode(value, [])).message).toBe(`$: expected [number, string], got ${got}`)
+    expect(fails(() => type.encode(value, [])).message).toBe(`$: expected tuple(number, string), got ${got}`)
   })
 
   it("is usable through validate and is", () => {
@@ -106,10 +106,10 @@ describe("element errors", () => {
 
 describe("names", () => {
   it.each([
-    [tuple(Number, String), "[number, string]"],
-    [tuple(), "[]"],
-    [tuple(union(Number, String), Date), "[number | string, Date]"],
-    [tuple(tuple(), { a: null }), "[[], { a: null }]"],
+    [tuple(Number, String), "tuple(number, string)"],
+    [tuple(), "tuple()"],
+    [tuple(union(Number, String), Date), "tuple(union(number, string), date)"],
+    [tuple(tuple(), { a: null }), "tuple(tuple(), { a: null })"],
   ])("names %#", (type, name) => {
     expect(type.name).toBe(name)
   })

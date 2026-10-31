@@ -67,9 +67,9 @@ export function defineType<T>(
 }
 
 export function isType(value: unknown): value is Type<unknown> {
-  return typeof value === "object" && value !== null && TYPE in value && value[TYPE] === true
+  return typeof value === "object" && value !== null && Object.hasOwn(value, TYPE) && (value as Type<unknown>)[TYPE] === true
 }
 
 export function isOptional(value: unknown): value is Optional<unknown> {
-  return typeof value === "object" && value !== null && OPTIONAL in value
+  return typeof value === "object" && value !== null && Object.hasOwn(value, OPTIONAL)
 }

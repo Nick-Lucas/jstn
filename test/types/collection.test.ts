@@ -53,17 +53,17 @@ describe("array", () => {
 
   it("rejects a tagged list and non-arrays", () => {
     expect(fails(() => array(Number).decode({ kind: "list", tag: "Set", items: [], pos }, [])).message).toBe(
-      "$: expected number[], got Set (line 1, column 5)",
+      "$: expected array(number), got Set (line 1, column 5)",
     )
-    expect(fails(() => array(Number).encode(new Set([1]), [])).message).toBe("$: expected number[], got Set")
-    expect(fails(() => array(Number).encode({ length: 0 }, [])).message).toBe("$: expected number[], got object")
+    expect(fails(() => array(Number).encode(new Set([1]), [])).message).toBe("$: expected array(number), got Set")
+    expect(fails(() => array(Number).encode({ length: 0 }, [])).message).toBe("$: expected array(number), got object")
   })
 
   it.each([
-    [array(Number), "number[]"],
-    [array(array(Number)), "number[][]"],
-    [array(union(Number, String)), "(number | string)[]"],
-    [array({ "a b": String }), "{ \"a b\": string }[]"],
+    [array(Number), "array(number)"],
+    [array(array(Number)), "array(array(number))"],
+    [array(union(Number, String)), "array(union(number, string))"],
+    [array({ "a b": String }), "array({ \"a b\": string })"],
   ])("names %#", (type, name) => {
     expect(type.name).toBe(name)
   })
@@ -90,7 +90,7 @@ describe("set", () => {
 
   it("rejects a duplicate on decode at the list position", () => {
     const error = fails(() => set(Number).decode({ kind: "list", tag: "Set", items: [num(1), num(1)], pos }, ["s"]))
-    expect(error.message).toBe("$.s: invalid Set<number>: duplicate item (line 1, column 5)")
+    expect(error.message).toBe("$.s: invalid set(number): duplicate item (line 1, column 5)")
   })
 
   it("reports item paths in iteration order", () => {
@@ -98,14 +98,14 @@ describe("set", () => {
   })
 
   it("rejects a non-Set", () => {
-    expect(fails(() => set(Number).encode([1], [])).message).toBe("$: expected Set<number>, got array")
+    expect(fails(() => set(Number).encode([1], [])).message).toBe("$: expected set(number), got array")
     expect(fails(() => set(Number).decode({ kind: "list", tag: null, items: [], pos }, [])).message).toBe(
-      "$: expected Set<number>, got array (line 1, column 5)",
+      "$: expected set(number), got array (line 1, column 5)",
     )
   })
 
-  it("is named Set<number>", () => {
-    expect(set(Number).name).toBe("Set<number>")
+  it("is named set(number)", () => {
+    expect(set(Number).name).toBe("set(number)")
   })
 })
 
@@ -136,7 +136,7 @@ describe("map", () => {
 
   it("rejects a duplicate key on decode", () => {
     const node: Node = { kind: "list", tag: "Map", items: [list(null, str("a"), num(1)), list(null, str("a"), num(2))], pos }
-    expect(fails(() => map(String, Number).decode(node, ["m"])).message).toBe("$.m: invalid Map<string, number>: duplicate key (line 1, column 5)")
+    expect(fails(() => map(String, Number).decode(node, ["m"])).message).toBe("$.m: invalid map(string, number): duplicate key (line 1, column 5)")
   })
 
   it("rejects an item that is not a pair", () => {
@@ -145,11 +145,11 @@ describe("map", () => {
   })
 
   it("rejects a non-Map", () => {
-    expect(fails(() => map(String, Number).encode({ a: 1 }, [])).message).toBe("$: expected Map<string, number>, got object")
+    expect(fails(() => map(String, Number).encode({ a: 1 }, [])).message).toBe("$: expected map(string, number), got object")
   })
 
-  it("is named Map<string, number>", () => {
-    expect(map(String, Number).name).toBe("Map<string, number>")
+  it("is named map(string, number)", () => {
+    expect(map(String, Number).name).toBe("map(string, number)")
   })
 })
 
@@ -166,7 +166,7 @@ describe("custom collection", () => {
 
   it("rejects the wrong tag", () => {
     expect(fails(() => type.decode({ kind: "list", tag: "Set", items: [], pos }, [])).message).toBe(
-      "$: expected SortedSet<number>, got Set (line 1, column 5)",
+      "$: expected sortedSet(number), got Set (line 1, column 5)",
     )
   })
 
@@ -183,17 +183,17 @@ describe("custom collection", () => {
 
   it("wraps a throwing fromItems with its cause", () => {
     const error = fails(() => failing.decode({ kind: "list", tag: "SortedSet", items: [num(1)], pos }, ["scores"]))
-    expect(error.message).toBe("$.scores: invalid SortedSet<number>: bad items (line 1, column 5)")
+    expect(error.message).toBe("$.scores: invalid sortedSet(number): bad items (line 1, column 5)")
     expect((error.cause as Error).message).toBe("bad items")
   })
 
   it("wraps a throwing toItems", () => {
-    expect(fails(() => failing.encode(new SortedSet([1]), ["scores"])).message).toBe("$.scores: cannot stringify SortedSet<number>: no items")
+    expect(fails(() => failing.encode(new SortedSet([1]), ["scores"])).message).toBe("$.scores: cannot stringify sortedSet(number): no items")
   })
 
-  it("is named SortedSet<number>", () => {
-    expect(type.name).toBe("SortedSet<number>")
-    expect(sortedSet(union(Number, String)).name).toBe("SortedSet<number | string>")
+  it("is named sortedSet(number)", () => {
+    expect(type.name).toBe("sortedSet(number)")
+    expect(sortedSet(union(Number, String)).name).toBe("sortedSet(union(number, string))")
   })
 
   it("validates through JSTN.is", () => {
@@ -218,16 +218,16 @@ describe("createCollection", () => {
       }
     }
     const type = createCollection({ name: Bag, items: Number, fromItems: (items) => new Bag(items), toItems: (v) => v.items })
-    expect(type.name).toBe("Bag<number>")
+    expect(type.name).toBe("bag(number)")
     expect(JSTN.stringify(new Bag([1, 2]), type)).toBe("Bag[1,2]")
     expect(JSTN.parse("Bag[1, 2]", type)).toStrictEqual(new Bag([1, 2]))
-    expect(fails(() => JSTN.stringify([1, 2] as unknown as Bag, type)).message).toBe("$: expected Bag<number>, got array")
+    expect(fails(() => JSTN.stringify([1, 2] as unknown as Bag, type)).message).toBe("$: expected bag(number), got array")
   })
 
   it("lets an explicit match override the class default", () => {
     const type = createCollection({ name: Array, items: Number, match: (v) => Array.isArray(v) && v.length > 0, ...{ fromItems: spec.fromItems, toItems: spec.toItems } })
     expect(JSTN.stringify([1], type)).toBe("Array[1]")
-    expect(fails(() => JSTN.stringify([], type)).message).toBe("$: expected Array<number>, got array")
+    expect(fails(() => JSTN.stringify([], type)).message).toBe("$: expected array(number), got array")
   })
 
   it("rejects an anonymous class", () => {
@@ -242,14 +242,14 @@ describe("createCollection", () => {
 
   it("treats an items list as type arguments and pairs as items", () => {
     const pairs = createCollection({ name: "Pairs", items: [String, Number], ...spec, fromItems: (items) => items, toItems: (v) => v })
-    expect(pairs.name).toBe("Pairs<string, number>")
+    expect(pairs.name).toBe("pairs(string, number)")
     expect(JSTN.stringify([["a", 1]], pairs)).toBe("Pairs[[\"a\",1]]")
     expect(fails(() => JSTN.parse("Pairs[[\"a\"]]", pairs)).message).toBe("$[0]: expected 2 items, got 1 (line 1, column 7)")
   })
 
   it("builds a fixed collection with no factory", () => {
     const bag = createCollection({ name: "Bag", items: { a: Number }, ...spec, fromItems: (items) => items, toItems: (v) => v })
-    expect(bag.name).toBe("Bag<{ a: number }>")
+    expect(bag.name).toBe("bag({ a: number })")
     expect(JSTN.parse("Bag[{ a: 1 }]", bag)).toStrictEqual([{ a: 1 }])
   })
 })

@@ -56,7 +56,7 @@ describe("declaration order", () => {
 
   it("accepts null as a member", () => {
     const type = union(String, null)
-    expect(type.name).toBe("string | null")
+    expect(type.name).toBe("union(string, null)")
     expect(type.encode(null, [])).toStrictEqual({ kind: "null" })
     expect(type.decode({ kind: "null" }, [])).toBeNull()
     expect(type.decode({ kind: "string", value: "x" }, [])).toBe("x")
@@ -66,26 +66,26 @@ describe("declaration order", () => {
 
 describe("flattening", () => {
   it.each([
-    [union(union(Number, String), Boolean), "number | string | boolean"],
-    [union(Number, union(String, Boolean)), "number | string | boolean"],
-    [union(union(Number, String), union(Boolean, null)), "number | string | boolean | null"],
+    [union(union(Number, String), Boolean), "union(number, string, boolean)"],
+    [union(Number, union(String, Boolean)), "union(number, string, boolean)"],
+    [union(union(Number, String), union(Boolean, null)), "union(number, string, boolean, null)"],
   ])("names %#", (type, name) => {
     expect(type.name).toBe(name)
   })
 
-  it("keeps a flattened nested union unparenthesised inside an array", () => {
-    expect(array(union(union(Number, String), Boolean)).name).toBe("(number | string | boolean)[]")
+  it("keeps a flattened nested union flat inside an array", () => {
+    expect(array(union(union(Number, String), Boolean)).name).toBe("array(union(number, string, boolean))")
   })
 
   it("counts the members of a nested union when checking for at least 2", () => {
     const members: Schema[] = [union(Number, String)]
-    expect((union as (...members: Schema[]) => Type<unknown>)(...members).name).toBe("number | string")
+    expect((union as (...members: Schema[]) => Type<unknown>)(...members).name).toBe("union(number, string)")
   })
 
   it("resolves members of a flattened union", () => {
     const type = union(union(Number, String), Boolean)
     expect(type.encode(true, [])).toStrictEqual({ kind: "boolean", value: true })
-    expect(fails(() => type.encode(null, [])).message).toBe("$: expected number | string | boolean, got null")
+    expect(fails(() => type.encode(null, [])).message).toBe("$: expected union(number, string, boolean), got null")
   })
 })
 
@@ -114,13 +114,13 @@ describe("error selection", () => {
   it("reports a root mismatch when no member fails below the union", () => {
     const type = union(Number, String)
     const error = fails(() => type.decode({ kind: "boolean", value: true, pos: { line: 2, column: 6 } }, ["u"]))
-    expect(error.message).toBe("$.u: expected number | string, got boolean true (line 2, column 6)")
-    expect(fails(() => type.encode(true, ["u"])).message).toBe("$.u: expected number | string, got boolean true")
+    expect(error.message).toBe("$.u: expected union(number, string), got boolean true (line 2, column 6)")
+    expect(fails(() => type.encode(true, ["u"])).message).toBe("$.u: expected union(number, string), got boolean true")
   })
 
   it("treats a failure at the union's own path as a root failure", () => {
     const type = union({ a: Number }, String)
-    expect(fails(() => type.encode({}, [])).message).toBe("$: expected { a: number } | string, got object")
+    expect(fails(() => type.encode({}, [])).message).toBe("$: expected union({ a: number }, string), got object")
   })
 
   it("reports a deep failure below a nested union path", () => {
@@ -166,12 +166,12 @@ describe("names in containers", () => {
   const u = union(Number, String)
 
   it.each([
-    [array(u), "(number | string)[]"],
-    [array(array(u)), "(number | string)[][]"],
-    [set(u), "Set<number | string>"],
-    [map(u, union(Boolean, null)), "Map<number | string, boolean | null>"],
-    [tuple(u, u), "[number | string, number | string]"],
-    [JSTN.schema({ a: u }), "{ a: number | string }"],
+    [array(u), "array(union(number, string))"],
+    [array(array(u)), "array(array(union(number, string)))"],
+    [set(u), "set(union(number, string))"],
+    [map(u, union(Boolean, null)), "map(union(number, string), union(boolean, null))"],
+    [tuple(u, u), "tuple(union(number, string), union(number, string))"],
+    [JSTN.schema({ a: u }), "{ a: union(number, string) }"],
   ])("names %#", (type, name) => {
     expect(type.name).toBe(name)
   })

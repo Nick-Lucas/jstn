@@ -1,4 +1,4 @@
-import { RESERVED, isIdent, quote } from "./strings.ts"
+import { RESERVED, identifierFor, isIdent, quote } from "./strings.ts"
 import type { Node, Path, Pos } from "./type.ts"
 
 const MAX_QUOTED = 40
@@ -92,7 +92,7 @@ export function guard<R>(run: () => R, prefix: string, path: Path, pos?: Pos): R
 }
 
 export function assertTypeName(name: string): void {
-  if (!isIdent(name) || RESERVED.includes(name)) throw new JSTNError(`invalid type name ${quote(name)}`, [])
+  if (!isIdent(name) || RESERVED.includes(name) || RESERVED.includes(identifierFor(name))) throw new JSTNError(`invalid type name ${quote(name)}`, [])
 }
 
 export function checkDepth(depth: number, path: Path, pos?: Pos): void {

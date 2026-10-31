@@ -48,7 +48,7 @@ export const sortedSet = <S extends Schema>(item: S) => createCollection({
   toItems: (v) => v.items,
 })
 
-export const registry = { Money: money, Note: note, SortedSet: sortedSet }
+export const registry = { money, note, sortedSet }
 
 export const someSchema = JSTN.schema({ inner: Boolean })
 
@@ -90,15 +90,15 @@ export const sampleSchemaText = `{
   someNum: number,
   someStr: string,
   someDate: Date,
-  someObj: { inner: boolean },
-  someArr: number[],
-  someTuple: [number, string],
-  someUnion: number | string,
-  customVal: Money,
+  someObj: { inner: Boolean },
+  someArr: array(Number),
+  someTuple: tuple(number, String),
+  someUnion: union(number, string),
+  customVal: money,
   big: bigint,
-  tags: Set<string>,
-  lookup: Map<string, { a: number }>,
-  scores: SortedSet<number>,
+  tags: set(string),
+  lookup: map(string, { a: number }),
+  scores: sortedSet(number),
   nothing: null,
-  "key with space"?: string,
+  "key with space": optional(string),
 }`

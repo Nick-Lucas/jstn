@@ -6,7 +6,7 @@ JavaScript Type Notation: schemas plus a data format that looks like JavaScript 
 - **Data** keeps the types JSON loses, such as `Date`, `bigint`, `Set`, `Map` and your own classes.
 - **The API** works like `JSON`, with a schema as the second argument.
 
-<!-- jstn-schema { id: bigint, name: string, joined: Date, roles: Set<string>, manager: string | null } -->
+<!-- jstn-schema { id: bigint, name: string, joined: date, roles: set(string), manager: union(string, null) } -->
 
 ```jstn
 {
@@ -63,25 +63,27 @@ $.roles[1]: expected string, got number 2 (line 5, column 23)
 
 ## Cheat sheet
 
-| TypeScript schema | Schema text | Data |
-|---|---|---|
-| `number` or `Number` | `number` | `1`, `-0`, `NaN`, `Infinity` |
-| `string` or `String` | `string` | `"a"` or `'a'` |
-| `boolean` or `Boolean` | `boolean` | `true` |
-| `bigint` or `BigInt` | `bigint` | `123n` |
-| `null` | `null` | `null` |
-| `date` or `Date` | `Date` | `Date(2026-01-01T14:00:00Z)` |
-| `{ a: Number }` | `{ a: number }` | `{ a: 1 }` |
-| `{ "b c": optional(Number) }` | `{ "b c"?: number }` | `{}` or `{ "b c": 1 }` |
-| `array(Number)` | `number[]` | `[1, 2]` |
-| `tuple(Number, String)` | `[number, string]` | `[1, "a"]` |
-| `union(Number, String)` | `number \| string` | `1` or `"a"` |
-| `set(String)` | `Set<string>` | `Set["a", "b"]` |
-| `map(String, Number)` | `Map<string, number>` | `Map[["a", 1]]` |
-| `createType(...)` | `Money` | `Money(12.50 GBP)` |
-| `createCollection(...)` | `SortedSet<number>` | `SortedSet[1, 2]` |
+A schema is written the same way in TypeScript and as text.
 
-Data may contain `//` and `/* */` comments and trailing commas. Keys need quotes only when they are not identifiers.
+| Schema | Data |
+|---|---|
+| `number` | `1`, `-0`, `NaN`, `Infinity` |
+| `string` | `"a"` or `'a'` |
+| `boolean` | `true` |
+| `bigint` | `123n` |
+| `null` | `null` |
+| `date` | `Date(2026-01-01T14:00:00Z)` |
+| `{ a: number }` | `{ a: 1 }` |
+| `{ "b c": optional(number) }` | `{}` or `{ "b c": 1 }` |
+| `array(number)` | `[1, 2]` |
+| `tuple(number, string)` | `[1, "a"]` |
+| `union(number, string)` | `1` or `"a"` |
+| `set(string)` | `Set["a", "b"]` |
+| `map(string, number)` | `Map[["a", 1]]` |
+| `money`, from `createType` | `Money(12.50 GBP)` |
+| `sortedSet(number)`, from `createCollection` | `SortedSet[1, 2]` |
+
+`Number`, `String`, `Boolean`, `BigInt` and `Date` work as shorthands for the scalars. Data may contain `//` and `/* */` comments and trailing commas. Keys need quotes only when they are not identifiers.
 
 ## Examples
 
@@ -137,7 +139,7 @@ async function loadOrder(id: bigint): Promise<Order> {
 
 The request body is compact:
 
-<!-- jstn-schema { id: bigint, placedAt: Date, lines: { sku: string, quantity: number }[] } -->
+<!-- jstn-schema { id: bigint, placedAt: date, lines: array({ sku: string, quantity: number }) } -->
 
 ```jstn
 {id:9007199254740993n,placedAt:Date(2026-10-31T09:30:00Z),lines:[{sku:"A-1",quantity:2}]}
@@ -204,7 +206,7 @@ const Link = JSTN.schema({ title: String, href: url })
 JSTN.stringify({ title: "Docs", href: new URL("https://example.com/docs") }, Link)
 ```
 
-<!-- jstn-schema { title: string, href: URL } -->
+<!-- jstn-schema { title: string, href: url } -->
 
 ```jstn
 {title:"Docs",href:URL(https://example.com/docs)}
@@ -255,30 +257,35 @@ const Leaderboard = JSTN.schema({ scores: sortedSet(Number) })
 JSTN.stringify({ scores: new SortedSet([3, 1, 2]) }, Leaderboard)
 ```
 
-<!-- jstn-schema { scores: SortedSet<number> } -->
+<!-- jstn-schema { scores: sortedSet(number) } -->
 
 ```jstn
 {scores:SortedSet[1,2,3]}
 ```
 
-### Write schemas as text
+### Store and share schemas as text
+
+A schema's `name` is its source code. Save it, send it, read it back with `parseSchema`, or paste it into TypeScript:
 
 ```ts
-import { JSTN, createType } from "jstn"
+import { JSTN, array, createType, optional, set } from "jstn"
 
 const url = createType({ name: URL, parse: (text) => new URL(text), stringify: (u) => u.href })
 
-const Bookmark = JSTN.parseSchema(`{
-  title: string,
-  href: URL,
-  tags: Set<string>,
-  visited?: Date[],
-}`, { types: { URL: url } })
+const Bookmark = JSTN.schema({
+  title: String,
+  href: url,
+  tags: set(String),
+  visited: optional(array(Date)),
+})
 
-JSTN.parse(`{ title: "Docs", href: URL(https://example.com), tags: Set[] }`, Bookmark)
+const text = Bookmark.name
+const copy = JSTN.parseSchema(text, { types: { url } })
+
+JSTN.parse(`{ title: "Docs", href: URL(https://example.com), tags: Set[] }`, copy)
 ```
 
-Text schemas are checked at runtime only, so `parse` returns `unknown`. See [docs/schema-language.md](docs/schema-language.md).
+`text` is `{ title: string, href: url, tags: set(string), visited: optional(array(date)) }`. Text schemas are checked at runtime only, so `parse` with `copy` returns `unknown`. See [docs/schema-language.md](docs/schema-language.md).
 
 ### Use with Standard Schema libraries
 
@@ -320,11 +327,11 @@ Returns `true` when `value` matches and narrows its type. Trust only the `true` 
 
 ### `JSTN.schema(schema)`
 
-Turns any schema, including shorthands and object literals, into a `Type`. Use it to name a schema once and reuse it.
+Turns any schema, including shorthands and object literals, into a `Type`. Use it to name a schema once and reuse it. Its `name` is the schema as text, which you can paste back into TypeScript.
 
 ### `JSTN.parseSchema(text, { types? })`
 
-Reads [schema text](docs/schema-language.md) and returns a `Type<unknown>`. `types` registers custom types and collection factories by name.
+Reads [schema text](docs/schema-language.md), which is the same syntax as a TypeScript schema, and returns a `Type<unknown>`. `types` registers custom types and collection factories by name, as in `{ types: { money, sortedSet } }`.
 
 ### Builders
 
@@ -350,6 +357,8 @@ Makes a tagged scalar, written `Name(payload)`.
 - `stringify(value)`: returns the payload text.
 
 The TypeScript type is inferred from the class, `match` or `parse`. See [docs/validation.md](docs/validation.md#createtype-inference).
+
+The type's `name` is the tag in camelCase, such as `money` for `Money`. Give the variable that name, so that schema text matches your code.
 
 ### `createCollection({ name, match?, items, fromItems, toItems })`
 

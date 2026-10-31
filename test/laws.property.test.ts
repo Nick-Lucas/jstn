@@ -1,10 +1,16 @@
 import fc from "fast-check"
 import { expect, it } from "vitest"
 import { formatPath } from "../src/core/error.ts"
-import { JSTN, JSTNError } from "../src/index.ts"
+import { JSTN, JSTNError, array, bigint, boolean, date, map, number, optional, set, string, tuple, union } from "../src/index.ts"
 import type { Type } from "../src/index.ts"
 import { mutateText, typeAndValue, typedMutant, typedValue } from "./support/arbitraries.ts"
 import { registry } from "./support/fixtures.ts"
+
+const builders = { number, string, boolean, bigint, date, array, tuple, union, set, map, optional, ...registry }
+
+function paste(name: string): unknown {
+  return new Function(...Object.keys(builders), `return (${name})`)(...Object.values(builders))
+}
 
 const numRuns = 300
 const space = fc.constantFrom(undefined, 2, "\t")
@@ -50,6 +56,16 @@ it("reads every type name back to the same name", () => {
   fc.assert(
     fc.property(typeAndValue, ({ type }) => {
       expect(JSTN.parseSchema(type.name, { types: registry }).name).toBe(type.name)
+    }),
+    { numRuns },
+  )
+})
+
+it("evaluates every type name as a builder expression to a type with the same name", () => {
+  fc.assert(
+    fc.property(typeAndValue, ({ type }) => {
+      fc.pre(!/[{,] __proto__: /.test(type.name))
+      expect(JSTN.schema(paste(type.name) as Type<unknown>).name).toBe(type.name)
     }),
     { numRuns },
   )

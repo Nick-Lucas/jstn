@@ -12,7 +12,7 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
 
 function objectName(fields: readonly Field[]): string {
   if (fields.length === 0) return "{}"
-  return `{ ${fields.map((f) => `${formatKey(f.key)}${f.optional ? "?" : ""}: ${f.type.name}`).join(", ")} }`
+  return `{ ${fields.map((f) => `${formatKey(f.key)}: ${f.optional ? `optional(${f.type.name})` : f.type.name}`).join(", ")} }`
 }
 
 function missing(key: string): string {

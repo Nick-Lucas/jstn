@@ -10,7 +10,7 @@ export type Token =
   | { readonly kind: "punct"; readonly value: string; readonly pos: Pos; readonly adjacent: boolean }
   | { readonly kind: "eof"; readonly value: ""; readonly pos: Pos; readonly adjacent: boolean }
 
-const PUNCT = new Set(["{", "}", "[", "]", "(", ")", ",", ":", "|", "?", "<", ">"])
+const PUNCT = new Set(["{", "}", "[", "]", "(", ")", ",", ":"])
 const WS = new Set([" ", "\t", "\n", "\r"])
 const NUMBER = /-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/y
 const NUMBER_RUN = /-?(?:[0-9A-Za-z_$.]|(?<=[eE])[+-])*/y

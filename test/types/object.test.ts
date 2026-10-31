@@ -185,10 +185,10 @@ describe("non-plain values", () => {
 describe("names", () => {
   it.each([
     ["an empty shape", JSTN.schema({}), "{}"],
-    ["optional and quoted keys", JSTN.schema({ a: Number, "b c": optional(String) }), "{ a: number, \"b c\"?: string }"],
+    ["optional and quoted keys", JSTN.schema({ a: Number, "b c": optional(String) }), "{ a: number, \"b c\": optional(string) }"],
     ["nested objects", JSTN.schema({ a: { b: { c: null } } }), "{ a: { b: { c: null } } }"],
-    ["a union field", JSTN.schema({ u: union(Number, String) }), "{ u: number | string }"],
-    ["an array field", JSTN.schema({ xs: array({ a: Date }) }), "{ xs: { a: Date }[] }"],
+    ["a union field", JSTN.schema({ u: union(Number, String) }), "{ u: union(number, string) }"],
+    ["an array field", JSTN.schema({ xs: array({ a: Date }) }), "{ xs: array({ a: date }) }"],
   ])("names %s", (_, type, name) => {
     expect(type.name).toBe(name)
   })

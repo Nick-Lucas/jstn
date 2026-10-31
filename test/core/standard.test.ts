@@ -33,16 +33,16 @@ describe("~standard", () => {
     ["a missing key", JSTN.schema({ a: Number }), {}, "missing required key \"a\"", []],
     ["an unknown key", JSTN.schema({ a: optional(Number) }), { b: 1 }, "unknown key", ["b"]],
     ["the root", number, "1", "expected number, got string \"1\"", []],
-    ["a union", union(Number, String), true, "expected number | string, got boolean true", []],
-    ["a custom type", money, "12.50 GBP", "expected Money, got string \"12.50 GBP\"", []],
-    ["a custom collection item", sortedSet(Number), new Set([1]), "expected SortedSet<number>, got Set", []],
+    ["a union", union(Number, String), true, "expected union(number, string), got boolean true", []],
+    ["a custom type", money, "12.50 GBP", "expected money, got string \"12.50 GBP\"", []],
+    ["a custom collection item", sortedSet(Number), new Set([1]), "expected sortedSet(number), got Set", []],
   ] as [string, StandardSchemaV1, unknown, string, (string | number)[]][])("reports one issue with a path for %s", (_, schema, value, message, path) => {
     expect(validate(schema, value)).toStrictEqual({ issues: [{ message, path }] })
   })
 
   it("reports a failing custom stringify as an issue", () => {
     const broken = createType({ name: Money, parse: () => new Money("1", "GBP"), stringify: () => { throw new Error("boom") } })
-    expect(validate(broken, new Money("1", "GBP"))).toStrictEqual({ issues: [{ message: "cannot stringify Money: boom", path: [] }] })
+    expect(validate(broken, new Money("1", "GBP"))).toStrictEqual({ issues: [{ message: "cannot stringify money: boom", path: [] }] })
   })
 
   it("agrees with JSTN.is", () => {

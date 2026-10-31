@@ -177,10 +177,10 @@ describe("strings", () => {
 
 describe("punctuation", () => {
   it("lexes every punct character as its own token", () => {
-    expect(values("{}[](),:|?<>>").map(([, value]) => value)).toStrictEqual([..."{}[](),:|?<>>"])
+    expect(values("{}[](),::").map(([, value]) => value)).toStrictEqual([..."{}[](),::"])
   })
 
-  it.each(["@", "#", ";", "/", "*", "="])("rejects %s", (char) => {
+  it.each(["@", "#", ";", "/", "*", "=", "|", "?", "<", ">", "&"])("rejects %s", (char) => {
     expect(lexError(`1 ${char}`)).toBe(`$: unexpected character "${char}" (line 1, column 3)`)
   })
 

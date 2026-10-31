@@ -27,7 +27,7 @@ class FakeURL {
     this.href = href
   }
 }
-const types = { ...registry, URL: createType({ name: "URL", match: (v) => v instanceof FakeURL, parse: (text) => new FakeURL(text), stringify: (u) => u.href }) }
+const types = { ...registry, url: createType({ name: "URL", match: (v) => v instanceof FakeURL, parse: (text) => new FakeURL(text), stringify: (u) => u.href }) }
 
 function lineOf(text: string, index: number): number {
   return text.slice(0, index).split("\n").length

@@ -13,6 +13,12 @@ const SHORT_ESCAPES = new Map([
 ])
 export const RAW_FORBIDDEN = /[()"'\\\u0000-\u001f\u007f]/
 
+export function identifierFor(tag: string): string {
+  const run = /^[A-Z]+/.exec(tag)?.[0] ?? ""
+  const keep = run.length > 1 && /[a-z]/.test(tag[run.length] ?? "") ? 1 : 0
+  return run.slice(0, run.length - keep).toLowerCase() + tag.slice(run.length - keep)
+}
+
 export function isIdent(text: string): boolean {
   IDENT.lastIndex = 0
   return IDENT.exec(text)?.[0] === text

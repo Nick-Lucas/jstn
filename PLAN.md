@@ -2,7 +2,7 @@
 
 This document is the single source of truth for implementing JSTN. Where a detail is not specified here, choose the simplest behaviour that is consistent with this document, then add it to the README.
 
-Base proposal: **simplicity** (one `Type` interface with `encode` and `decode`, a schema-free `Node` tree between text and values, every `Type.name` valid jstn-schema text).
+Base proposal: **simplicity** (one `Type` interface with `encode` and `decode`, a schema-free `Node` tree between text and values, every `Type.name` valid jstn-schema text). jstn-schema text is the TypeScript builder syntax, so a `Type.name` is also a TypeScript expression that builds the same type.
 Grafted from **types**: the `out T` brand, `createCollection(spec)` returning a `Type`, with generic collections written as plain generic wrapper functions, `NoInfer` on `stringify`, `createType` and `createCollection`, type tests without `@ts-expect-error`, folder layout by concern, `JSTN.is`.
 Grafted from **format**: a typed `Node` union, the shared lexer with `readPayload`, the precise lexical grammar, the `${path}: ${reason} (line L, column C)` message format, syntax errors that carry paths, the inline scalar list printing rule, rejection of duplicates, and the nesting depth limit.
 
@@ -12,12 +12,13 @@ Grafted from **format**: a typed `Node` union, the shared lexer with `readPayloa
 
 ### Goals
 
-1. **Part 1, Schemas.** Structure-only validators that are type-safe at runtime and at build time. There are two ways to write them: the TypeScript builder API (`JSTN.schema({...})`) and the jstn-schema text language (`JSTN.parseSchema(text)`). Both produce the same `Type` objects.
-2. **Part 2, Serialisation.** A data format that looks like JavaScript literals. `JSTN.parse(text, schema)` and `JSTN.stringify(value, schema, space?)` both validate against the schema.
-3. An API that a `JSON.*` user already knows, with the schema in place of JSON's second argument.
-4. Extensibility through `createType` (tagged scalars) and `createCollection` (tagged containers). Built-ins use the same machinery where it fits: `date` uses `createType`, and `set` and `map` use `createCollection`.
-5. A small codebase that is easy to read. Every file has one job and stays under 300 lines. There are zero runtime dependencies.
-6. Comprehensive tests: example tests per module, an exact-message error catalogue, fast-check properties and type-level tests.
+1. **Part 1, Schemas.** Structure-only validators that are type-safe at runtime and at build time. There are two ways to write them: the TypeScript builder API (`JSTN.schema({...})`) and the jstn-schema text language (`JSTN.parseSchema(text)`). The text language uses the builder syntax, so the same text works in both places. Both produce the same `Type` objects.
+2. **The paste property.** Every `Type.name` is schema text that is also valid TypeScript. Pasting `t.name` into `JSTN.schema(...)`, with the builders and the registered custom types in scope under their camelCase names, compiles and gives a type with the same name and the same `Infer` type.
+3. **Part 2, Serialisation.** A data format that looks like JavaScript literals. `JSTN.parse(text, schema)` and `JSTN.stringify(value, schema, space?)` both validate against the schema.
+4. An API that a `JSON.*` user already knows, with the schema in place of JSON's second argument.
+5. Extensibility through `createType` (tagged scalars) and `createCollection` (tagged containers). Built-ins use the same machinery where it fits: `date` uses `createType`, and `set` and `map` use `createCollection`.
+6. A small codebase that is easy to read. Every file has one job and stays under 300 lines. There are zero runtime dependencies.
+7. Comprehensive tests: example tests per module, an exact-message error catalogue, fast-check properties, type-level tests and a compile test of pasted names.
 
 ### Non-goals (v1)
 
@@ -121,6 +122,8 @@ The API beyond the fixed list consists of `JSTN.validate` and `JSTN.is`. Both ar
 
 `Array`, `Set`, `Map`, `Object` and `Symbol` are compile errors, because they are not in `Schema`. At runtime they throw with a hint, for example `$: not a schema: Array (use array(...))`.
 
+**Registry.** `ParseSchemaOptions.types` maps names to the custom types and collection factories that schema text may use. Register each under the same name as the variable that holds it, which is the camelCase form of its tag, using object shorthand: `{ types: { money, sortedSet } }`. Then a `Type.name` that mentions them reads back with `parseSchema` and also compiles as TypeScript in the scope that defines them.
+
 ### 2.3 Usage, matching the request
 
 ```ts
@@ -182,7 +185,7 @@ JSTN.stringify(value, S)
 JSTN.validate(unknownInput, S)
 if (JSTN.is(unknownInput, S)) unknownInput.someNum
 
-const S2 = JSTN.parseSchema(schemaText, { types: { Money: money, SortedSet: sortedSet } })
+const S2 = JSTN.parseSchema(schemaText, { types: { money, sortedSet } })
 ```
 
 The output of `JSTN.stringify(value, S, 2)`:
@@ -217,26 +220,28 @@ The output of `JSTN.stringify(value, S, 2)`:
 
 The Map entry `["x", { a: 1 }]` is a list that contains an object, so by the §4.4 rule it is not all-scalar and breaks one item per line. A map whose values are scalars stays compact per entry: `Map[\n    ["a", 1],\n    ["b", 2],\n  ]`. The golden tests in `write-data.test.ts` pin both forms.
 
-The equivalent text schema:
+The equivalent text schema. It is also valid TypeScript, and it equals `S.name` apart from line breaks and the trailing comma:
 
 ```jstn-schema
 {
   someNum: number,
   someStr: string,
-  someDate: Date,
+  someDate: date,
   someObj: { inner: boolean },
-  someArr: number[],
-  someTuple: [number, string],
-  someUnion: number | string,
-  customVal: Money,
+  someArr: array(number),
+  someTuple: tuple(number, string),
+  someUnion: union(number, string),
+  customVal: money,
   big: bigint,
-  tags: Set<string>,
-  lookup: Map<string, { a: number }>,
-  scores: SortedSet<number>,
+  tags: set(string),
+  lookup: map(string, { a: number }),
+  scores: sortedSet(number),
   nothing: null,
-  "key with space"?: string,
+  "key with space": optional(string),
 }
 ```
+
+The type names are camelCase (`money`, `sortedSet`, `date`), while the data tags keep the class names (`Money(...)`, `SortedSet[...]`, `Date(...)`).
 
 ---
 
@@ -336,6 +341,8 @@ The following claims were verified on TypeScript 7.0.2 with `strict` and `exactO
 
 **The core law.** `t.encode(v)` succeeds if and only if `t.decode(t.encode(v))` succeeds, and the decoded value is deep-equal to `v`. This includes the depth limit: `encode` refuses a value nested deeper than `MAX_DEPTH`, the same as the reader does. There is one validation path. `encode` validates while it builds a Node, and `decode` validates while it builds a value.
 
+**The name laws.** Two laws hold for names (§4.3). The name law: `parseSchema(t.name, { types }).name === t.name`. The paste law: evaluating `t.name` as a JavaScript expression, with the builders and the registered types in scope, gives a type whose `name` is `t.name`. Together they make a schema's name its source code in both languages.
+
 ### Standard Schema (`src/core/standard.ts`)
 
 Every `Type` implements [Standard Schema](https://standardschema.dev) v1. The interfaces are copied into the library, so there is no dependency.
@@ -432,7 +439,7 @@ Int           = "0" | ( "1".."9" ) { Digit } ;
 Frac          = "." Digit { Digit } ;
 Exp           = ( "e" | "E" ) [ "+" | "-" ] Digit { Digit } ;
 
-Punct         = "{" | "}" | "[" | "]" | "(" | ")" | "," | ":" | "|" | "?" | "<" | ">" ;
+Punct         = "{" | "}" | "[" | "]" | "(" | ")" | "," | ":" ;
 ```
 
 Lexical rules:
@@ -446,7 +453,7 @@ Lexical rules:
 - Line terminators are LF, CRLF (one line) and CR. Lines and columns are 1-based. Columns count UTF-16 code units, and a tab counts as one column.
 - Each token records `pos`, which is the position of its first character, and `adjacent`, which is `true` when no trivia came between the previous token and this one.
 - An unterminated block comment gives `unterminated comment` at the `/*`. An unterminated string gives `unterminated string` at the opening quote. A raw control character inside a string gives `control character in string`. A bad escape gives `invalid escape "\q"`.
-- Any other character gives `unexpected character "@"`.
+- Any other character gives `unexpected character "@"`. That includes `|`, `?`, `<` and `>`, which neither grammar uses.
 
 Lexer API (implemented in the foundation unit; both readers use it):
 
@@ -519,67 +526,83 @@ Reader rules:
 - **Depth limit.** Nesting deeper than 512 lists and objects fails with `nesting deeper than 512 levels` at the opening bracket. The limit is the constant `MAX_DEPTH = 512`, defined in `core/error.ts` with `checkDepth(depth, path, pos?)`. Both readers and the list, tuple and object encoders call `checkDepth`, so `stringify` never writes text that `parse` rejects, and `validate` and `is` fail with a `JSTNError` instead of overflowing the stack.
 - **Trailing content** fails with `unexpected <token>, expected end of input`.
 - **Path stack.** The reader keeps a mutable path stack. It pushes the key or index before reading each child and pops it afterwards. The lexer's `fail` callback throws `new JSTNError(reason, [...stack], pos)`, so syntax errors also carry paths.
-- **Punct outside the data grammar.** `|`, `?`, `<` and `>` are not part of data. If they appear in value position, they fail through `unexpected`.
+- **Characters outside both grammars.** `|`, `?`, `<` and `>` are not punct, so the lexer rejects them with `unexpected character "|"` wherever they appear outside a string or payload.
 - **Large integers.** A number literal beyond 2^53 parses as the nearest double, the same as JSON. Use the `n` suffix when exactness matters.
 - **JSON compatibility.** Any `JSON.stringify` output is valid jstn data. The only exception is that duplicate keys are rejected.
 
 ### 4.3 jstn-schema grammar (`src/syntax/read-schema.ts`)
 
+Schema text is the TypeScript builder syntax. Every text schema is also a TypeScript expression that builds the same type, given the builders and the registered types in scope.
+
 ```ebnf
-SchemaDoc     = Trivia Type Trivia EOF ;
-Type          = [ "|" ] Postfix { "|" Postfix } ;
-Postfix       = Primary { "[" "]" } ;                     (* binds tighter than "|", as in TS *)
-Primary       = Name [ "<" Type { "," Type } [ "," ] ">" ]
-              | "{" [ Field { "," Field } [ "," ] ] "}"
-              | "[" [ Type { "," Type } [ "," ] ] "]"     (* tuple; "[]" is the empty tuple *)
-              | "(" Type ")" ;
-Field         = Key [ "?" ] ":" Type ;
+SchemaDoc     = Trivia Schema Trivia EOF ;
+Schema        = Name [ "(" [ Schema { "," Schema } [ "," ] ] ")" ]   (* a builder call or a bare type *)
+              | "{" [ Field { "," Field } [ "," ] ] "}" ;
+Field         = Key ":" Schema ;                         (* optional(...) is valid only here *)
 Key           = Ident | String ;
 Name          = Ident ;
 ```
 
 - There are no adjacency rules in schema text.
-- `>>` is two `>` tokens, because punct tokens are single characters.
-- Number and bigint tokens are rejected everywhere. String tokens are allowed only as `Key`.
-- A union with a single member is that member.
-- Nesting deeper than 512 levels is an error. `{`, `[`, `(` and `<` each count one level, and so does each `[]` suffix, so `number[][]` is two levels deep.
+- `[` and `]` are not valid in schema text. Number and bigint tokens are rejected everywhere. String tokens are allowed only as `Key`. These fail through `unexpected`, for example `unexpected number 1, expected schema`.
+- Calls and objects allow trailing commas.
+- Nesting deeper than 512 levels is an error. `{` and `(` each count one level.
 
-**Name resolution.** The built-in names are `number`, `string`, `boolean`, `bigint`, `null`, `Date`, `Set` and `Map`. After them come the entries in `options.types`:
+**Name resolution.** Every name is either a type, which is written bare, or a builder, which must be called.
 
-- A function that is not a shorthand constructor is a collection factory, such as `set`, `map` or a user's generic wrapper around `createCollection`. Its arity is `fn.length`. It must be written with type arguments, and the number of arguments must equal its arity.
-- A factory with `fn.length === 0` fails with `"Foo" is not a schema or collection` when the registry is read.
-- The reader calls the factory with the argument `Type`s. If the result is not a `Type` (`isType`), it fails with `"Foo" did not return a type`, positioned at the name token.
+| Name | Kind | Arguments |
+|---|---|---|
+| `number`, `string`, `boolean`, `bigint`, `null`, `date` | type | none |
+| `Number`, `String`, `Boolean`, `BigInt`, `Date` | type: the constructor shorthands for the names above | none |
+| `array`, `set` | builder | 1 |
+| `map` | builder | 2 |
+| `tuple` | builder | 0 or more |
+| `union` | builder | 2 or more |
+| `optional` | builder | 1, and the result is valid only as a field value |
+
+After the built-ins come the entries in `options.types`:
+
+- A function that is not a shorthand constructor is a collection factory, such as a user's generic wrapper around `createCollection`. It is a builder whose arity is `fn.length`, and it must be called with exactly that many arguments.
+- A factory with `fn.length === 0` fails with `"foo" is not a schema or collection` when the registry is read.
+- The reader calls the factory with the argument `Type`s. If the result is not a `Type` (`isType`), it fails with `"foo" did not return a type`, positioned at the name token.
 - Any other registry value is treated as a `Schema`, normalised with `toType`, and used as a bare name. This includes `Type`, shorthand constructors, `null` and object shapes. A collection with a fixed item schema is a `Type`, so it is registered this way.
+- A registry key cannot redefine any built-in name, type or builder, and must pass `assertTypeName` (§6.1).
 
-Errors. Every error has path `$`. All of them carry line and column except the registry errors, which are raised before reading starts and have no position.
+Errors. Every error has path `$`. All of them carry line and column except the registry errors, which are raised before reading starts and have no position. Errors about a name are positioned at the name token.
 
 | Situation | Reason |
 |---|---|
-| Unknown name | `unknown type "User"` |
-| Type arguments on a non-generic name | `"number" does not take type arguments` |
-| Generic name used without arguments | `"Set" requires 1 type argument` |
-| Wrong number of arguments | `"Map" expects 2 type arguments, got 1` |
-| Factory result that is not a `Type` | `"Arr" did not return a type` |
+| Unknown name | `unknown type "user"` |
+| A type that is called | `"number" is not a function` |
+| A builder that is not called | `"array" must be called` |
+| Wrong number of arguments, fixed arity | `"map" expects 2 arguments, got 1`, `"set" expects 1 argument, got 0` |
+| Too few arguments, open arity | `"union" expects at least 2 arguments, got 1` |
+| `optional(...)` anywhere but a field value | `optional() is only valid as an object field` |
+| Factory result that is not a `Type` | `"foo" did not return a type` |
 | Duplicate field | `duplicate key "a"` |
-| `options.types` key that is a built-in name | `cannot redefine built-in type "Date"` |
-| `options.types` key that is not an identifier | `invalid type name "x y"` |
-| `options.types` function with no declared parameters | `"Fn" is not a schema or collection` |
+| `options.types` key that is a built-in name | `cannot redefine built-in type "date"` |
+| `options.types` key that is not an identifier, or is reserved | `invalid type name "x y"` |
+| `options.types` function with no declared parameters | `"foo" is not a schema or collection` |
 
-**How the reader builds types.** It calls the public builders: `array`, `tuple`, `union`, `optional`, the collection factories, and `JSTN.schema` through `toType`. For object types, it builds a null-prototype object with `Object.defineProperty` for each field (so `"__proto__"` is safe), wraps optional fields in `optional(...)`, and calls `toType`. This guarantees that text schemas and builder schemas produce identical `Type`s.
+**How the reader builds types.** It calls the public builders: `array`, `set`, `map`, `tuple`, `union`, `optional`, the registered collection factories, and `JSTN.schema` through `toType`. For object types, it builds a null-prototype object with `Object.defineProperty` for each field (so `"__proto__"` is safe), stores each field value as read (a `Type`, or an `Optional` from `optional(...)`), and calls `toType`. This guarantees that text schemas and builder schemas produce identical `Type`s.
 
-**The name law.** `Type.name` is canonical single-line jstn-schema text:
+**The name law.** `Type.name` is canonical single-line jstn-schema text, which is also the TypeScript builder expression for the type:
 
 | Type | Name |
 |---|---|
-| scalars | `number`, `string`, `boolean`, `bigint`, `null`, `Date` |
-| custom type | its tag: the string `name`, or the class's `name` |
-| array | `T[]`; the item name is wrapped in parentheses when the item is a union: `(number \| string)[]` |
-| tuple | `[A, B]`, empty `[]` |
-| object | `{ a: A, "b c"?: B }`, empty `{}`. Keys go through `formatKey`, and fields stay in schema order |
-| union | `A \| B \| C`. Nested unions are flattened at construction, so the name never needs parentheses inside a union |
-| collection | `Name<A, B>` |
+| scalars | `number`, `string`, `boolean`, `bigint`, `null`, `date` |
+| custom type | `identifierFor(tag)`: the tag in camelCase, such as `money` for `Money` |
+| array | `array(T)` |
+| tuple | `tuple(A, B)`, empty `tuple()` |
+| object | `{ a: A, "b c": optional(B) }`, empty `{}`. Keys go through `formatKey`, and fields stay in schema order |
+| union | `union(A, B, C)`. Nested unions are flattened at construction |
+| collection | `identifierFor(tag)(A, B)`, such as `set(string)`, `map(string, number)` and `sortedSet(number)` |
 
-For any type `t` built from built-ins plus registered customs, `parseSchema(t.name, { types }).name === t.name`. The exceptions are a `createType` or `createCollection` named `Date`, `Set` or `Map`, because the text name resolves to the built-in, and a collection with a fixed item schema registered as a bare name. The README documents these exceptions.
+No name ever needs parentheses for grouping, because every compound type is a call or an object.
+
+For any type `t` built from built-ins plus registered customs, with each custom registered under `identifierFor` of its tag, `parseSchema(t.name, { types }).name === t.name`. The exceptions are a `createType` or `createCollection` whose camelCase name is a built-in name, such as a `createType` tagged `Date` or a collection tagged `Set`, because the text name resolves to the built-in, and a collection with a fixed item schema registered as a bare name. `docs/schema-language.md` documents these exceptions.
+
+**The paste law.** With the builders and the same registered types in scope as JavaScript bindings, evaluating `t.name` as an expression gives a type whose `name` is `t.name`. In TypeScript, `JSTN.schema(<t.name pasted>)` compiles and has the same `Infer` type as `t`. The exceptions are the same as for the name law.
 
 ### 4.4 Canonical stringify output (`src/syntax/write-data.ts`)
 
@@ -647,8 +670,8 @@ export function writeData(node: Node, space?: number | string): string
 | object | plain object, keys checked (§5.3) | `object` | `object`, keys checked (§5.3) |
 | `tuple` | `Array.isArray(v) && v.length === n` | `list null` | `list` with tag `null` and exactly `n` items |
 | `array` | `Array.isArray(v)`; a hole encodes as `undefined` and fails at its index | `list null` | `list` with tag `null` |
-| `set` | `v instanceof Set` | `list "Set"` | `list "Set"`. Duplicates (SameValueZero) fail with `invalid Set<T>: duplicate item` |
-| `map` | `v instanceof Map` | `list "Map"` whose items are 2-item `list null` | `list "Map"` whose items are pairs. Duplicate keys fail with `invalid Map<K, V>: duplicate key` |
+| `set` | `v instanceof Set` | `list "Set"` | `list "Set"`. Duplicates (SameValueZero) fail with `invalid set(T): duplicate item` |
+| `map` | `v instanceof Map` | `list "Map"` whose items are 2-item `list null` | `list "Map"` whose items are pairs. Duplicate keys fail with `invalid map(K, V): duplicate key` |
 | union | first member whose `encode` succeeds | that member's node | first member whose `decode` succeeds |
 
 Boxed primitives (`new Number(1)`) are rejected. Element paths are `[i]`. Set items are indexed in iteration order. Map entries use `[i][0]` for the key and `[i][1]` for the value, because a map item is a `tuple(k, v)`.
@@ -664,13 +687,13 @@ Boxed primitives (`new Number(1)`) are rejected. Element paths are `[i]`. Set it
 - The fields are range-checked: month 1–12, day up to the length of that month (leap years included), hour 0–23, minute 0–59, second 0–59, offset hours 0–23 and offset minutes 0–59.
 - Milliseconds are the first three fraction digits, padded with zeros on the right.
 - Build the date with `new Date(0)`, then `setUTCFullYear(y, m - 1, d)` and `setUTCHours(h, mi, s, ms)`, then subtract the offset. Do not use `Date.UTC`, because it maps years 0–99 to 1900–1999. If the result is outside the range of `Date`, it is rejected.
-- A failure gives `invalid Date "<payload>": <why>`.
+- A failure gives `invalid date "<payload>": <why>`. The message uses the type name `date`, while the data tag stays `Date`.
 
 ### 5.2 Union resolution
 
-- **Construction.** `union(...members)` normalises each member. A member that is itself a union contributes its members, which is how nested unions are flattened. The unions are tracked in a module-level `WeakMap<Type, Type[]>` in `union.ts`, and the `array` name wrapping uses the exported `isUnion(t)`. At runtime, fewer than 2 members (after flattening) throws `union() needs at least 2 members`.
+- **Construction.** `union(...members)` normalises each member. A member that is itself a union contributes its members, which is how nested unions are flattened. The unions are tracked in a module-level `WeakMap<Type, Type[]>` in `union.ts`, which is not exported. The name is `union(A, B, C)` over the flattened members. At runtime, fewer than 2 members (after flattening) throws `union() needs at least 2 members`.
 - **Encode and decode.** The members are tried in declaration order, and the first success wins. Only `JSTNError` is caught. Any other error propagates.
-- **When every member fails.** Among the member errors whose `path` is strictly below the union's own formatted path, choose the one with the longest `path` string, and on a tie the earliest member. Rethrow that error unchanged. If no member error is below the union's path, throw `expected A | B, got <describe>` at the union's path and node position.
+- **When every member fails.** Among the member errors whose `path` is strictly below the union's own formatted path, choose the one with the longest `path` string, and on a tie the earliest member. Rethrow that error unchanged. If no member error is below the union's path, throw `expected union(A, B), got <describe>` at the union's path and node position.
 - Ambiguity is resolved by declaration order, and the README documents this. Tags remove most ambiguity: `1` versus `1n`, `[..]` versus `Set[..]`, `Date(..)` versus `"..."`.
 
 ### 5.3 Objects, optional keys and unknown keys
@@ -741,6 +764,8 @@ export function guard<R>(run: () => R, prefix: string, path: Path, pos?: Pos): R
 - **`guard`** runs user code: `parse`, `stringify`, `toItems` and `fromItems`. If it throws, `guard` throws `new JSTNError(`${prefix}: ${message}`, path, pos, { cause })`. The message is `e.message` for an `Error` and `String(e)` otherwise.
 - The library only ever throws `JSTNError`. That includes API misuse at definition time, such as a bad type name or `union()` with fewer than 2 members. Those errors use path `$` and no position.
 
+Messages that name an expected type use its `Type.name`, so they read as schema text: `expected money`, `invalid set(number)`, `expected union(number, string)`. What was found is described by `describeValue` or `describeNode`, which use class names and data tags: `got Note`, `got invalid Date`.
+
 Example messages. These are normative; `errors.test.ts` pins them.
 
 ```text
@@ -752,17 +777,21 @@ $.a: unterminated string (line 1, column 4)
 $: unexpected identifier "x", expected end of input (line 3, column 1)
 $.a[2]: unexpected ",", expected value (line 1, column 12)
 $.d: expected "(" or "[" immediately after tag "Date" (line 1, column 5)
-$.u: expected number | string, got boolean true (line 2, column 6)
+$.u: expected union(number, string), got boolean true (line 2, column 6)
 $.t: expected 2 items, got 3 (line 1, column 5)
-$.price: invalid Money "abc": expected "<amount> <CCY>" (line 2, column 10)
-$.price: invalid Money "1 GBP": parse result rejected by match (line 2, column 10)
-$.s: invalid Set<number>: duplicate item (line 1, column 5)
-$.someDate: expected Date, got string "2026-01-01"
+$.price: invalid money "abc": expected "<amount> <CCY>" (line 2, column 10)
+$.price: invalid money "1 GBP": parse result rejected by match (line 2, column 10)
+$.price: expected money, got Note (line 2, column 10)
+$.s: invalid set(number): duplicate item (line 1, column 5)
+$.d: invalid date "2026-02-30": day out of range (line 1, column 5)
+$.someDate: expected date, got string "2026-01-01"
 $.p: expected { x: number }, got Point
-$.c: cannot stringify Money: boom
-$: unknown type "User" (line 3, column 10)
-$: "Map" expects 2 type arguments, got 1 (line 1, column 1)
-$: cannot redefine built-in type "Date"
+$.c: cannot stringify money: boom
+$: unknown type "user" (line 3, column 10)
+$: "map" expects 2 arguments, got 1 (line 1, column 1)
+$: "number" is not a function (line 1, column 1)
+$: "array" must be called (line 1, column 1)
+$: cannot redefine built-in type "date"
 $: not a schema: Array (use array(...))
 $: optional() is only valid as an object field
 ```
@@ -791,16 +820,17 @@ export function createType<T>(spec: TypeSpec<T>): Type<T>
 
 - **`name`** is either a string or a class. A string is the tag, and `match` is required. A class gives the tag `Class.name`, and `match` is optional. It defaults to `value instanceof Class`.
 - **`resolveNamed(spec)`** turns a `Named` into `{ tag, match }`. `createType` and `createCollection` both call it. It runs `assertTypeName(tag)`, returns an explicit `match` as given, throws `$: "X" needs a match function` for a string name with no `match`, and otherwise builds the `instanceof` check. The type rejects a string name without `match` at compile time. The runtime check covers casts.
-- **The tag** is both the data tag and the `Type.name`. `assertTypeName(tag)` (in `core/error.ts`, next to the `JSTNError` it throws) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]`. Shadowing `Date`, `Set` or `Map` is allowed, so a user can supply an alternative codec. A violation throws `$: invalid type name "x"`. An anonymous class has the name `""`, so it fails this check.
+- **The tag** is the data tag, as in `Money(12.50 GBP)`. `assertTypeName(tag)` (in `core/error.ts`, next to the `JSTNError` it throws) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]` and whose `identifierFor(tag)` is not in `RESERVED` either, so `Number` and `NULL` are rejected. Shadowing `Date`, `Set` or `Map` is allowed, so a user can supply an alternative codec. A violation throws `$: invalid type name "x"`. An anonymous class has the name `""`, so it fails this check.
+- **The name.** `Type.name` is `identifierFor(tag)` (in `core/strings.ts`), the tag in camelCase. A leading run of capitals is lowercased, except that the last capital of a run of two or more stays when a lowercase letter follows it: `Money` gives `money`, `SortedSet` gives `sortedSet`, `URL` gives `url`, `JSONValue` gives `jsonValue`, and `note` stays `note`. The user names the variable that holds the type the same way, so schema text pastes into TypeScript. Every message below uses the name, not the tag.
 - **encode:**
-  1. If `match(v)` is false, throw `expected ${tag}, got ${describeValue(v)}`.
-  2. Run `guard(() => spec.stringify(v), "cannot stringify " + tag)`.
-  3. If the result is not a string, throw `cannot stringify ${tag}: stringify must return a string`.
+  1. If `match(v)` is false, throw `expected ${name}, got ${describeValue(v)}`, for example `expected money, got object`.
+  2. Run `guard(() => spec.stringify(v), "cannot stringify " + name)`.
+  3. If the result is not a string, throw `cannot stringify ${name}: stringify must return a string`.
   4. Return `{ kind: "tagged", tag, payload }`. The writer decides between the raw and the quoted form, so user code never escapes anything.
 - **decode:**
-  1. The node must have kind `tagged` with the same tag. Otherwise throw `expected ${tag}, got ${describeNode}`.
-  2. Run `guard(() => spec.parse(payload), `invalid ${tag} ${quote(payload)}`)`.
-  3. If `match(result)` is false, throw `invalid ${tag} ${quote(payload)}: parse result rejected by match`.
+  1. The node must have kind `tagged` with the same tag. Otherwise throw `expected ${name}, got ${describeNode}`, for example `expected money, got Note`.
+  2. Run `guard(() => spec.parse(payload), `invalid ${name} ${quote(payload)}`)`, for example `invalid money "abc": ...`.
+  3. If `match(result)` is false, throw `invalid ${name} ${quote(payload)}: parse result rejected by match`.
 - **Inference.** `T` comes from the class, from `match` when it is a type guard, and from `parse`. `stringify` takes `NoInfer<T>`, so it never contributes. If the sources disagree, the call does not compile (§3).
 
 ### 6.2 createCollection (`src/types/collection.ts`)
@@ -820,11 +850,11 @@ export function createCollection<S extends Schema, C>(spec: CollectionSpec<S, In
 
 - **`name` and `match`** work exactly as in `createType`, through `resolveNamed`. `Named<unknown>` is used because `C` comes from `fromItems`, not from the class.
 - **`items`** is one `Schema` or a non-empty array of `Schema`s:
-  - One schema gives one type argument. Each item has that schema, and the name is `Tag<A>`.
-  - An array gives one type argument per entry. Each item is a tuple of those schemas, built with `tuple(...)`, and the name is `Tag<A, B>`.
+  - One schema gives one argument. Each item has that schema, and the name is `tag(A)` with the tag in camelCase, such as `sortedSet(number)`.
+  - An array gives one argument per entry. Each item is a tuple of those schemas, built with `tuple(...)`, and the name is `tag(A, B)`, such as `map(string, number)`.
 - **`C`** is the return type of `fromItems`. `toItems` takes `NoInfer<C>`, so write `fromItems` before `toItems`.
 - **Generic collections** are plain generic functions written by the user, `<S extends Schema>(item: S) => createCollection({...})`. The function's type parameter carries the item type, because TypeScript cannot apply a generic class such as `SortedSet` to a type argument by itself. Nothing inside the spec needs an annotation. A collection with a fixed item schema needs no wrapper and is a plain `Type<C>`.
-- **Runtime.** `createCollection` resolves the tag and `match`, normalises each schema with `toType`, builds the item type (the single type, or `tuple(...args)`), computes `name = `${tag}<${args.map((a) => a.name).join(", ")}>``, and returns `listType(tag, name, item, { match, toItems, fromItems })`. The `toItems` and `fromItems` passed on are arrows that call `spec.toItems(value)` and `spec.fromItems(items)`, so `this` stays bound.
+- **Runtime.** `createCollection` resolves the tag and `match`, normalises each schema with `toType`, builds the item type (the single type, or `tuple(...args)`), computes `name = `${identifierFor(tag)}(${args.map((a) => a.name).join(", ")})``, and returns `listType(tag, name, item, { match, toItems, fromItems })`. The `toItems` and `fromItems` passed on are arrows that call `spec.toItems(value)` and `spec.fromItems(items)`, so `this` stays bound.
 
 **`listType`** is internal and is the shared core for every list-shaped type:
 
@@ -848,10 +878,10 @@ function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: L
 | Built-in | File | Built with |
 |---|---|---|
 | `number`, `string`, `boolean`, `bigint`, null | `scalars.ts` | `literalType(name, kind, test)`: about 10 lines each through `defineType`. These map directly onto literal Node kinds. They are not tagged, so they are not built with `createType` |
-| `date` | `date.ts` | `createType({ name: Date, match, parse: parseIsoDate, stringify: formatIsoDate })`, where `match` also rejects an invalid `Date`. This is the public extension API, which proves it is sufficient |
-| `array` | `collection.ts` | `listType(null, arrayName(item), item, { match: Array.isArray, toItems: identity, fromItems: identity })`. It is untagged, so it uses `listType` directly |
-| `set` | `collection.ts` | a plain function, `set(item)`, returning `createCollection({ name: Set, items: item, ... })`, where `fromItems` throws `duplicate item` when `new Set(items).size !== items.length` and `toItems` is the set itself |
-| `map` | `collection.ts` | a plain function, `map(key, value)`, returning `createCollection({ name: Map, items: [key, value], ... })`, where `toItems` is `m.entries()` and `fromItems` throws `duplicate key` when sizes differ |
+| `date` | `date.ts` | `createType({ name: Date, match, parse: parseIsoDate, stringify: formatIsoDate })`, where `match` also rejects an invalid `Date`. The tag is `Date` and the name is `date`. This is the public extension API, which proves it is sufficient |
+| `array` | `collection.ts` | `listType(null, `array(${item.name})`, item, { match: Array.isArray, toItems: identity, fromItems: identity })`. It is untagged, so it uses `listType` directly |
+| `set` | `collection.ts` | a plain function, `set(item)`, returning `createCollection({ name: Set, items: item, ... })`, so the name is `set(T)`, where `fromItems` throws `duplicate item` when `new Set(items).size !== items.length` and `toItems` is the set itself |
+| `map` | `collection.ts` | a plain function, `map(key, value)`, returning `createCollection({ name: Map, items: [key, value], ... })`, so the name is `map(K, V)`, where `toItems` is `m.entries()` and `fromItems` throws `duplicate key` when sizes differ |
 | `tuple` | `tuple.ts` | `defineType` directly, because the positions are heterogeneous and the length is fixed |
 | `union` | `union.ts` | `defineType` directly |
 | object | `object.ts` | `objectType(fields: readonly Field[])` with `type Field = { key: string; type: Type<unknown>; optional: boolean }` via `defineType`. Only `toType` calls it |
@@ -884,37 +914,38 @@ tsconfig.json                strict type-check config for src + test (noEmit)
 tsconfig.build.json          extends tsconfig.json; src only; emits dist/ with declarations
 vitest.config.ts             test include globs
 .gitignore                   node_modules/, dist/, coverage/, *.log (already present)
-README.md                    language reference (both grammars, output rules) and API guide
+README.md                    getting started, cheat sheet, examples and API reference; links to docs/
+docs/                        data-format.md, schema-language.md, validation.md, grammar.md (§9)
 
 src/
   index.ts                   public surface: re-exports exactly the names in §2.1
   jstn.ts                    the JSTN object: parse, stringify, validate, is, schema, parseSchema
   core/
-    strings.ts               IDENT, RAW_FORBIDDEN, isIdent, quote, formatKey, isRawPayload, RESERVED
+    strings.ts               IDENT, RAW_FORBIDDEN, isIdent, quote, formatKey, isRawPayload, RESERVED, identifierFor
     type.ts                  brands, Type, Optional, Schema, Shape, Infer, InferShape, ReadonlyInput, Node, Entry, Pos, Path, defineType, isType, isOptional
     standard.ts              StandardSchemaV1, StandardSchemaV1Props, StandardSchemaV1Result, StandardSchemaV1Issue, standardProps
     error.ts                 JSTNError, formatPath, describeValue, describeNode, mismatch, guard, assertTypeName, MAX_DEPTH, checkDepth
     schema.ts                toType (Schema → Type), optional, isShorthand
   types/
     scalars.ts               number, string, boolean, bigint, nullType
-    custom.ts                createType, resolveNamed, Class, Match, Named, TypeSpec
+    custom.ts                createType, resolveNamed, Class, Match, Named, TypeSpec; name = identifierFor(tag)
     date.ts                  date: strict ISO-8601 parseIsoDate and formatIsoDate, via createType
-    object.ts                objectType: strict keys, optional fields, safe construction, object name
-    tuple.ts                 tuple
-    union.ts                 union, isUnion, flattening, best-error selection
-    collection.ts            listType, createCollection, CollectionSpec, array, set, map
+    object.ts                objectType: strict keys, optional fields, safe construction, object name with optional(...) fields
+    tuple.ts                 tuple, named tuple(A, B)
+    union.ts                 union, flattening, best-error selection, named union(A, B)
+    collection.ts            listType, createCollection, CollectionSpec, array, set, map; names array(T) and identifierFor(tag)(A, B)
   syntax/
-    lexer.ts                 shared tokenizer: trivia, tokens, positions, grammar helpers, readPayload, describeToken
+    lexer.ts                 shared tokenizer: trivia, tokens, punct { } [ ] ( ) , :, positions, grammar helpers, readPayload, describeToken
     read-data.ts             readData(text): Node; path stack, duplicate keys, tag adjacency, depth limit
     write-data.ts            writeData(node, space): string; compact/pretty rules, scalar spelling
-    read-schema.ts           readSchema(text, registry): Type; Registry and ParseSchemaOptions types
+    read-schema.ts           readSchema(text, registry): Type; built-in types and builders, registry resolution, Registry and ParseSchemaOptions types
 
 test/
   support/
-    fixtures.ts              Money and Note (createType), SortedSet and sortedSet (a generic createCollection wrapper), registry, sample schema S
+    fixtures.ts              Money and Note (createType), SortedSet and sortedSet (a generic createCollection wrapper), registry { money, note, sortedSet }, sample schema S
     arbitraries.ts           fast-check: fc.letrec {type, value} generators, tricky strings, arbitrary Nodes
   core/
-    strings.test.ts          quote, formatKey, isRawPayload, assertTypeName
+    strings.test.ts          quote, formatKey, isRawPayload, identifierFor, assertTypeName
     error.test.ts            JSTNError fields and message, formatPath, describeValue, describeNode, guard
     standard.test.ts         ~standard props, validate results and issue paths
     schema.test.ts           toType shorthands, shapes, optional placement, rejections with hints
@@ -930,13 +961,14 @@ test/
     lexer.test.ts            every token class and lexical error
     read-data.test.ts        data grammar → Node, positions, syntax errors with paths
     write-data.test.ts       golden output for every node kind and space value
-    read-schema.test.ts      schema grammar, precedence, registry, errors
+    read-schema.test.ts      schema grammar, built-in types and builders, arities, registry, errors
     syntax.property.test.ts  readData(writeData(n)) equals n; JSON superset; total reader
   api.test.ts                end-to-end through JSTN.* with the user's examples
   errors.test.ts             exact-message catalogue (message, reason, path, line, column)
-  laws.property.test.ts      round trip, canonical output, name law, total parse, is/stringify agreement
+  laws.property.test.ts      round trip, canonical output, name law, paste law, total parse, is/stringify agreement
   infer.test-d.ts            type-level tests for Infer and the API signatures
   compile-errors.test.ts     runs tsc on snippets that must not compile, such as JSTN.stringify("x", {})
+  paste.test.ts              runs tsc on each schema's pasted name and checks the Infer type is unchanged
   docs.test.ts               README and docs/ code blocks parse, round-trip and type-check
 ```
 
@@ -988,7 +1020,7 @@ General rules:
 - `Money`: the class and the `money` type from §2.3. A raw payload looks like `Money(12.50 GBP)`.
 - `Note`: a class `{ text: string }` with `note = createType({ name: "Note", match: v instanceof Note, parse: (t) => new Note(t), stringify: (n) => n.text })`. Its payload can be any string, so it exercises raw versus quoted payloads.
 - `SortedSet` and `sortedSet`, as in §2.3.
-- `registry = { Money: money, Note: note, SortedSet: sortedSet }`.
+- `registry = { money, note, sortedSet }`, written with object shorthand so each key is the type's name.
 - `S`, the full schema from §2.3; `sampleValue`, a matching value; and `sampleSchemaText`, the jstn-schema text from §2.3.
 
 ### test/core/strings.test.ts (foundation)
@@ -1005,7 +1037,8 @@ General rules:
 3. `isRawPayload`:
    - true for `2026-01-01T14:00:00Z`, `12.50 GBP` and `https://x.io//a`
    - false for `""`, a leading or trailing space, each forbidden character, a newline and a tab
-4. `assertTypeName`: accepts `Money`, `Date` and `Set`. It rejects `""`, `"a b"`, `"1x"` and every `RESERVED` name, with an exact message.
+4. `identifierFor`: `Money` gives `money`, `SortedSet` gives `sortedSet`, `URL` gives `url`, `JSONValue` gives `jsonValue`, `Date` gives `date`, and names that already start lowercase (`note`, `_X`, `$y`) are unchanged.
+5. `assertTypeName`: accepts `Money`, `Date` and `Set`. It rejects `""`, `"a b"`, `"1x"`, every `RESERVED` name, and tags whose `identifierFor` is reserved, such as `Number`, `String`, `Boolean` and `NULL`, with an exact message.
 
 ### test/core/error.test.ts (foundation)
 
@@ -1104,19 +1137,19 @@ General rules:
 1. `Money` encode produces a tagged Node, and decode gives a `Money` instance.
 2. `Note` with these payloads: an empty string, leading and trailing spaces, `(`, `)`, quotes, a newline, a backslash and unicode. All round-trip through `JSTN.stringify` and `JSTN.parse`. The output uses the raw form exactly when `isRawPayload` is true.
 3. Decode failures:
-   - the wrong tag gives `expected Money, got Note`
+   - the wrong tag gives `expected money, got Note`
    - a non-tagged node is rejected
-   - `parse` throwing an `Error` gives `invalid Money "abc": <msg>` with `cause`
+   - `parse` throwing an `Error` gives `invalid money "abc": <msg>` with `cause`
    - `parse` throwing a non-Error is also wrapped
    - `parse` returning a non-matching value gives `parse result rejected by match`
 4. Encode failures:
    - `match` false gives a mismatch
-   - `stringify` throwing gives `cannot stringify Money: boom`
+   - `stringify` throwing gives `cannot stringify money: boom`
    - `stringify` returning a non-string is rejected
-5. Name validation: every reserved name and every non-identifier is rejected. `Date` is allowed as a shadowing name.
-6. `Type.name` equals the spec name.
+5. Name validation: every reserved name, every tag whose camelCase form is reserved, and every non-identifier is rejected. `Date` is allowed as a shadowing name.
+6. `Type.name` is the tag in camelCase (`money`, `note`), while the data tag is unchanged (`Money(...)`, `Note(...)`).
 7. A class `name`:
-   - the tag is the class name, and `match` defaults to `instanceof`, so a plain object gives `expected Point, got object`
+   - the tag is the class name, and `match` defaults to `instanceof`, so a plain object gives `expected point, got object`
    - an explicit `match` overrides the default, including on decode (`parse result rejected by match`)
    - an anonymous class gives `invalid type name ""`
    - a string name with no `match`, forced through a cast, gives `"Point" needs a match function`
@@ -1129,7 +1162,7 @@ General rules:
    - years 0–99 are correct, for example `0005-03-01T00:00:00Z`
    - extended years `+275760-09-13T00:00:00Z` and `-000001-01-01T00:00:00Z`
 2. **Accepted:** date-only (UTC midnight), minutes only, seconds, 1 to 9 fraction digits (truncated to milliseconds), `Z`, `+05:30` and `-08:00` offsets (converted to an instant), a leap day `2024-02-29`, and `2026-12-31T23:59:59Z`.
-3. **Rejected**, each giving `invalid Date "<p>": ...`:
+3. **Rejected**, each giving `invalid date "<p>": ...`:
    - `2026-02-30`, `2025-02-29`, `2026-13-01`, `2026-00-10`
    - `24:00`, `12:60`
    - a missing zone with a time
@@ -1138,7 +1171,7 @@ General rules:
    - an empty payload
    - out-of-range years beyond `Date` limits
    - `1`, which `new Date("1")` would accept
-4. **Encode:** an invalid `Date` (`new Date(NaN)`) gives `expected Date, got invalid Date`. Encode also rejects a string and a number.
+4. **Encode:** an invalid `Date` (`new Date(NaN)`) gives `expected date, got invalid Date`. Encode also rejects a string and a number.
 5. **Round trip:** `parse(stringify(d))` equals `d` for sampled instants, and for the minimum and maximum instants of `Date`.
 
 ### test/types/object.test.ts (unit A)
@@ -1156,14 +1189,14 @@ General rules:
    - parse never sets `undefined`
    - a required key present as `undefined` gives `expected number, got undefined` at the field path
 6. Class instances are rejected with the constructor name, and so are arrays, `Map`, `null` and `Object.create(proto)`.
-7. Names: `{}`, `{ a: number, "b c"?: string }`, nested objects, an object whose field is a union.
+7. Names: `{}`, `{ a: number, "b c": optional(string) }`, nested objects, an object whose field is a union (`{ u: union(number, string) }`).
 
 ### test/types/tuple.test.ts (unit A)
 
-1. `tuple(Number, String)` encode and decode. Empty tuple `[]`. Nested tuples. A tuple of objects.
+1. `tuple(Number, String)` encode and decode. The empty tuple, which reads and writes `[]`. Nested tuples. A tuple of objects.
 2. Length mismatch in both directions gives `expected 2 items, got 3`, with the list position on decode.
 3. An error at a position carries the path `[1]`. A tagged list (`Set[...]`) is rejected for a tuple. A non-array is rejected.
-4. Names: `[number, string]`, `[]`, `[number | string, Date]`.
+4. Names: `tuple(number, string)`, `tuple()`, `tuple(union(number, string), date)`.
 
 ### test/types/union.test.ts (unit A)
 
@@ -1173,14 +1206,14 @@ General rules:
    - `union(String, Date)` tells `"x"` from `Date(...)`
    - `union(array(String), set(String))` tells `[...]` from `Set[...]`
 2. With `null`: `union(String, null)`.
-3. Flattening: `union(union(A, B), C).name === "A | B | C"`.
+3. Flattening: `union(union(A, B), C).name === "union(A, B, C)"`.
 4. Error selection:
    - an object member that fails deep gives that deep error, as in `union({a: Number}, String)` with `{a: "x"}` reporting `$.a`
    - when two members fail deep, the longer path wins, and on a tie the earlier member wins
-   - when every member fails at the root, the result is `expected A | B, got ...` with the position
+   - when every member fails at the root, the result is `expected union(A, B), got ...` with the position
 5. Non-`JSTNError` exceptions from a member, for example a user `match` that throws a `TypeError`, propagate unchanged.
 6. Fewer than 2 members at runtime throws, including the case where the members are given from an array spread.
-7. Names inside an array get parentheses: `(number | string)[]`. Unions inside `Set<...>`, tuples and object fields do not.
+7. Names never need grouping parentheses: `array(union(number, string))`, `set(union(number, string))`, `tuple(union(number, null))` and an object field holding a union.
 
 ### test/types/collection.test.ts (unit A)
 
@@ -1189,43 +1222,43 @@ General rules:
    - a hole gives `$[0]: expected number, got undefined`
    - an error at index 2 has the path `[2]`
    - a tagged list is rejected
-   - names: `number[]`, `number[][]`, `(number | string)[]`
+   - names: `array(number)`, `array(array(number))`, `array(union(number, string))`
 2. `set`:
    - empty `Set[]`
    - insertion order is preserved
    - object items
-   - a duplicate on decode gives `invalid Set<number>: duplicate item` with the position
+   - a duplicate on decode gives `invalid set(number): duplicate item` with the position
    - two structurally equal objects are not duplicates
    - a non-Set is rejected
-   - the name is `Set<number>`
+   - the name is `set(number)`
 3. `map`:
    - empty
    - string keys, object keys and `Date` keys
    - error paths `[i][0]` and `[i][1]`
    - a duplicate key on decode
    - a non-pair item gives `expected 2 items, got 1`
-   - the name is `Map<string, number>`
+   - the name is `map(string, number)`
 4. Custom collection (`sortedSet`):
    - encode gives a `SortedSet` tag, and decode gives a `SortedSet` instance
    - the wrong tag is rejected
-   - `fromItems` throwing gives `invalid SortedSet<number>: <msg>` with `cause`
-   - `toItems` throwing gives `cannot stringify SortedSet<number>: <msg>`
-   - the name is `SortedSet<number>`
+   - `fromItems` throwing gives `invalid sortedSet(number): <msg>` with `cause`
+   - `toItems` throwing gives `cannot stringify sortedSet(number): <msg>`
+   - the name is `sortedSet(number)`, while the data tag stays `SortedSet`
 5. `createCollection`:
    - a reserved name or a non-identifier name gives `invalid type name`
-   - a class name gives the tag and an `instanceof` match: `Bag<number>` writes `Bag[1,2]`, and a plain array gives `expected Bag<number>, got array`
+   - a class name gives the tag and an `instanceof` match: `bag(number)` writes `Bag[1,2]`, and a plain array gives `expected bag(number), got array`
    - an explicit `match` overrides the class default
    - an anonymous class gives `invalid type name ""`
    - a string name with no `match`, forced through a cast, gives `"Bag" needs a match function`
-   - an `items` array gives tuple items and the name `Pairs<string, number>`, and a short item gives `expected 2 items, got 1`
-   - a fixed collection with object items has the name `Bag<{ a: number }>` and needs no wrapper
+   - an `items` array gives tuple items and the name `pairs(string, number)`, and a short item gives `expected 2 items, got 1`
+   - a fixed collection with object items has the name `bag({ a: number })` and needs no wrapper
 
 ### test/core/standard.test.ts (unit A)
 
 1. `JSTN.schema(...)["~standard"]` has `version: 1` and `vendor: "jstn"`, and it is frozen.
 2. On success, `validate` returns `{ value }` with the input value itself, and `issues` is undefined.
 3. One `it.each` table checks that a failure returns exactly one issue, `{ message, path }`, for a nested key, an array index, a quoted key, a tuple slot, a map entry (`[0, 1]`), a missing key, an unknown key, the root, a union, a custom type and a custom collection.
-4. A throwing custom `stringify` is reported as an issue: `cannot stringify Money: boom`.
+4. A throwing custom `stringify` is reported as an issue: `cannot stringify money: boom`.
 5. `validate` agrees with `JSTN.is` on matching and non-matching values.
 
 ### test/infer.test-d.ts (unit A)
@@ -1308,7 +1341,7 @@ A matching `stringify` call is the control and must compile.
    - a stray `}`
    - an empty document
    - trailing garbage after the value
-   - `|` in value position
+   - `|` in value position, which gives `unexpected character "|"`
    - an unterminated string inside a nested path, which reports that path
 8. A duplicate key gives `$.a: duplicate key` at the second key.
 9. Depth: 512 levels are accepted, and 513 give `nesting deeper than 512 levels`.
@@ -1354,26 +1387,26 @@ Golden strings are written inline with `toBe`.
 ### test/syntax/read-schema.test.ts (unit C)
 
 1. **Every production:**
-   - each built-in name
-   - `T[]` and `T[][]`
-   - tuples, including the empty tuple
-   - objects, including empty ones, with `?:`, quoted keys and trailing commas
-   - parentheses
-   - a leading `|`
+   - each built-in type name, and each constructor shorthand (`Number`, `String`, `Boolean`, `BigInt`, `Date`) resolving to the same type as its lowercase name
+   - each builder: `array(T)`, `array(array(T))`, `set(T)`, `map(K, V)`, `tuple()` and `tuple(A, B)`, `union(A, B, C)`
+   - objects, including empty ones, with `optional(...)` fields, quoted keys and trailing commas
+   - trailing commas in calls, such as `map(string, number,)`
    - comments and newlines everywhere
-2. **Precedence:** `number | string[]` is not the same as `(number | string)[]`. Check with `.name` and with behaviour.
-3. **Generics:** `Set<number>`, `Map<string, Set<Date>>` (with `>>`), trailing commas in the argument list.
-4. **Registry:**
-   - a bare `Type`
+2. **Builders and types are distinct:** a builder must be called and a type must not be. Each builder's arity is enforced, with the exact `expects ...` message.
+3. **`optional`** is accepted only as a field value. At the top level, and inside `array`, `tuple`, `union`, `set`, `map`, a registered factory or another `optional`, it fails with `optional() is only valid as an object field` at the `optional` token.
+4. **Old syntax is rejected:** `number[]`, `[number, string]`, `number | string`, `Set<number>` and `a?: number` each fail with an exact message, respectively `unexpected "[", expected end of input`, `unexpected "[", expected schema`, `unexpected character "|"`, `unknown type "Set"` and `unexpected character "?"`.
+5. **Registry:**
+   - a bare `Type`, used by its camelCase name (`money`)
    - a shorthand constructor
    - an object shape
    - `null`
-   - a collection factory with arguments
+   - a collection factory called with its declared number of arguments (`sortedSet(number)`), and the arity message when that number is wrong
    - a function with no declared parameters is rejected before reading
    - a factory that does not return a `Type` fails at its name token
-5. Every error in the §4.3 table, with exact messages and positions.
-6. The text schema and the builder schema behave identically. They have equal `.name`, and `stringify` gives the same output on `sampleValue`.
-7. Number, string and bigint tokens in type position are rejected. Depth 513 is rejected.
+   - a key that is any built-in name, whether a type or a builder (`date`, `Date`, `array`, `optional`), is rejected, and so is a key that fails `assertTypeName`
+6. Every error in the §4.3 table, with exact messages and positions.
+7. The text schema and the builder schema behave identically. They have equal `.name`, and `stringify` gives the same output on `sampleValue`.
+8. Number, string and bigint tokens in schema position are rejected. Depth 512 is accepted, and 513 is rejected, counting both `{` and `(`.
 
 ### test/api.test.ts (unit C)
 
@@ -1389,8 +1422,8 @@ Golden strings are written inline with `toBe`.
 This file is one `it.each` table with columns `[name, run: () => unknown, message, path, line, column]`. It contains every example message in §5.4, plus at least one row per distinct reason string in the codebase:
 
 - each syntax reason
-- each schema-text reason
-- each encode reason and each decode reason
+- each schema-text reason from the §4.3 table, including the builder reasons (`is not a function`, `must be called`, each form of `expects ...`, `optional() is only valid as an object field`)
+- each encode reason and each decode reason, with custom types and collections named in camelCase (`expected money, got Note`, `invalid money "abc": ...`, `invalid date "...": ...`, `invalid sortedSet(number): ...`)
 - user-callback wraps
 
 Every row asserts `instanceof JSTNError`, plus `message`, `reason`, `path`, `line` and `column`.
@@ -1408,14 +1441,23 @@ Properties, each with `numRuns` set to 300:
 1. **Round trip:** `parse(stringify(v, t, space), t)` is `toStrictEqual(v)` for `space` in `[undefined, 2, "\t"]`.
 2. **Canonical output:** with `s = stringify(v, t)`, `stringify(parse(s, t), t) === s`.
 3. **Name law:** `parseSchema(t.name, { types: registry }).name === t.name`.
-4. **Total parse:** for `fc.string()` and mutated canonical outputs, `parse(text, t)` returns or throws `JSTNError`, and nothing else.
-5. **Agreement:** for an arbitrary value and an arbitrary second schema, `is(v, t2) === (stringify does not throw)`. `is(parse(...), t)` is always true.
-6. **Validate:** a generated value is accepted. Replacing a leaf with a value of a different kind is rejected, and the error path points at that leaf. This is done with a path-aware mutation in `arbitraries.ts`.
+4. **Paste law:** evaluating `t.name` as JavaScript, with the builders and the registry entries in scope under their names, gives a type whose `name` is `t.name`.
+5. **Total parse:** for `fc.string()` and mutated canonical outputs, `parse(text, t)` returns or throws `JSTNError`, and nothing else.
+6. **Agreement:** for an arbitrary value and an arbitrary second schema, `is(v, t2) === (stringify does not throw)`. `is(parse(...), t)` is always true.
+7. **Validate:** a generated value is accepted. Replacing a leaf with a value of a different kind is rejected, and the error path points at that leaf. This is done with a path-aware mutation in `arbitraries.ts`.
+
+### test/paste.test.ts (unit C)
+
+This test checks the paste property from §1 with the real compiler. Like `compile-errors.test.ts`, it writes a temporary TypeScript project that extends `tsconfig.json` and maps `jstn` to `src/index.ts`, and runs `tsc --noEmit` once.
+
+1. The schemas cover every built-in, nested builders, objects with optional and quoted keys, unions, and the fixture types `money` and `sortedSet(...)`.
+2. For each schema, the test reads its runtime `.name` and pastes it verbatim into `JSTN.schema(...)` in the project, with the builders and the fixture types in scope under their names.
+3. The project asserts at the type level that the pasted schema's `Infer` type is identical to the original's, and `tsc` must report no errors.
 
 ### test/docs.test.ts (unit C)
 
 1. The test extracts the fenced blocks from `README.md` and every `docs/*.md` file, which it locates relative to the test file, not the working directory.
-2. Every ```` ```jstn-schema ```` block, and every hidden `<!-- jstn-schema ... -->` comment, parses with the fixture registry plus a `URL` type.
+2. Every ```` ```jstn-schema ```` block, and every hidden `<!-- jstn-schema ... -->` comment, parses with the fixture registry plus a `url` type (tag `URL`).
 3. Every ```` ```jstn ```` block parses against the nearest preceding schema in the same file, and `parse(stringify(parse(x)))` is stable. A single-line block must equal the compact `stringify` output exactly.
 4. Every ```` ```ts ```` block is written to a temporary project that maps `jstn` to `src/index.ts` and adds the `dom` lib, and `tsc` must report no errors in it. A ```` ```ts nocheck ```` block is skipped.
 5. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed. Only `ts`, `jstn`, `jstn-schema`, `ebnf`, `text` and `sh` fences are allowed.
@@ -1428,16 +1470,16 @@ Properties, each with `numRuns` set to 300:
 
 1. A one-paragraph pitch and a data sample.
 2. Getting started: install from GitHub, requirements, a quick start, and an example error.
-3. A cheat sheet: TypeScript schema, schema text and data for every type.
-4. Practical examples: a config file, HTTP with dates and bigints, localStorage, untrusted input, custom types, custom collections, text schemas, and Standard Schema.
+3. A cheat sheet with two columns, Schema and Data, for every type. There is one Schema column because TypeScript and schema text are identical.
+4. Practical examples: a config file, HTTP with dates and bigints, localStorage, untrusted input, custom types, custom collections, storing and sharing schemas as text (a `name` read back with `parseSchema` or pasted into TypeScript), and Standard Schema. Registries use object shorthand: `{ types: { money, sortedSet } }`.
 5. API reference: one short entry per export.
 6. Links to the docs and the licence.
 
 `docs/` holds the technical detail:
 
 - `data-format.md`: syntax, payload quoting, output rules and limits.
-- `schema-language.md`: schema text rules, the registry, static types and the name law.
-- `validation.md`: schemas, strict objects, unions, `is` narrowing, `createType` and `createCollection` inference, errors and paths, and Standard Schema.
+- `schema-language.md`: schema text as the TypeScript builder syntax, the built-in names and builders with their arities, the rules, the registry, camelCase names, the name law and its exceptions, and static types.
+- `validation.md`: schemas, strict objects, unions, `is` narrowing, `createType` and `createCollection` inference, tag and name rules (`identifierFor`, reserved names), errors and paths, and Standard Schema.
 - `grammar.md`: the reference grammars in EBNF (§4.1–4.3) and the details that apply on top.
 
 ---
@@ -1479,7 +1521,7 @@ Tests that must pass: `test/syntax/read-data.test.ts`, `test/syntax/write-data.t
 
 ### Unit C: Schema text, integration and docs
 
-It owns `src/syntax/read-schema.ts`, `README.md`, `test/support/arbitraries.ts`, `test/syntax/read-schema.test.ts`, `test/api.test.ts`, `test/errors.test.ts`, `test/laws.property.test.ts` and `test/docs.test.ts`, plus `docs/`.
+It owns `src/syntax/read-schema.ts`, `README.md`, `test/support/arbitraries.ts`, `test/syntax/read-schema.test.ts`, `test/api.test.ts`, `test/errors.test.ts`, `test/laws.property.test.ts`, `test/paste.test.ts` and `test/docs.test.ts`, plus `docs/`.
 
 Its tests must pass after A and B are merged. C is also responsible for the final `npm test` passing with everything merged.
 
