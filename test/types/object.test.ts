@@ -104,6 +104,13 @@ describe("unknown keys", () => {
   it("ignores symbol keys on encode", () => {
     expect(JSTN.is({ a: 1, [Symbol("s")]: 2 }, type)).toBe(true)
   })
+
+  it("ignores non-enumerable own keys on encode", () => {
+    const value = Object.defineProperty({ a: 1 }, "hidden", { value: 2, enumerable: false })
+    expect(JSTN.stringify(value, { a: Number })).toBe("{a:1}")
+    expect(JSTN.validate(value, { a: Number })).toBe(value)
+    expect(JSTN.is(value, { a: Number })).toBe(true)
+  })
 })
 
 describe("missing required keys", () => {

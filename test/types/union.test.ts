@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { JSTN, JSTNError, array, createType, map, set, tuple, union } from "../../src/index.ts"
-import type { Schema } from "../../src/index.ts"
+import type { Schema, Type } from "../../src/index.ts"
 
 function fails(run: () => unknown): JSTNError {
   try {
@@ -75,6 +75,11 @@ describe("flattening", () => {
 
   it("keeps a flattened nested union unparenthesised inside an array", () => {
     expect(array(union(union(Number, String), Boolean)).name).toBe("(number | string | boolean)[]")
+  })
+
+  it("counts the members of a nested union when checking for at least 2", () => {
+    const members: Schema[] = [union(Number, String)]
+    expect((union as (...members: Schema[]) => Type<unknown>)(...members).name).toBe("number | string")
   })
 
   it("resolves members of a flattened union", () => {

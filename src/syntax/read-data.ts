@@ -1,7 +1,7 @@
-import { JSTNError } from "../core/error.ts"
+import { checkDepth, JSTNError } from "../core/error.ts"
 import { quote } from "../core/strings.ts"
 import type { Entry, Node, Pos } from "../core/type.ts"
-import { Lexer, MAX_DEPTH } from "./lexer.ts"
+import { Lexer } from "./lexer.ts"
 
 function keyword(name: string, pos: Pos): Node | undefined {
   switch (name) {
@@ -20,16 +20,6 @@ export function readData(text: string): Node {
     throw new JSTNError(reason, [...path], pos)
   }
   const lexer = new Lexer(text, fail)
-
-  function enter(open: Pos): void {
-    if (path.length >= MAX_DEPTH) fail(`nesting deeper than ${MAX_DEPTH} levels`, open)
-  }
-
-  function more(close: string): boolean {
-    if (lexer.eat(",")) return true
-    lexer.expect(close, `"," or ${quote(close)}`)
-    return false
-  }
 
   function readValue(): Node {
     const token = lexer.next()
@@ -59,38 +49,36 @@ export function readData(text: string): Node {
   }
 
   function readList(tag: string | null, pos: Pos, open: Pos): Node {
-    enter(open)
+    checkDepth(path.length, path, open)
     const items: Node[] = []
     for (;;) {
       path.push(items.length)
       const closed = lexer.eat("]")
       if (!closed) items.push(readValue())
       path.pop()
-      if (closed || !more("]")) break
+      if (closed || !lexer.more("]")) break
     }
     return { kind: "list", tag, items, pos }
   }
 
   function readObject(pos: Pos): Node {
-    enter(pos)
+    checkDepth(path.length, path, pos)
     const entries: Entry[] = []
     const seen = new Set<string>()
     while (!lexer.eat("}")) {
-      const token = lexer.next()
-      if (token.kind !== "ident" && token.kind !== "string") return lexer.unexpected(token, "key")
+      const token = lexer.readKey()
       path.push(token.value)
       if (seen.has(token.value)) fail("duplicate key", token.pos)
       seen.add(token.value)
-      lexer.expect(":", quote(":"))
+      lexer.expect(":")
       entries.push({ key: token.value, value: readValue(), keyPos: token.pos })
       path.pop()
-      if (!more("}")) break
+      if (!lexer.more("}")) break
     }
     return { kind: "object", entries, pos }
   }
 
   const node = readValue()
-  const end = lexer.next()
-  if (end.kind !== "eof") lexer.unexpected(end, "end of input")
+  lexer.expectEnd()
   return node
 }

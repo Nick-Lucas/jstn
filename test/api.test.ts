@@ -78,6 +78,14 @@ describe("the request's call forms", () => {
     expect(value.scores).toBeInstanceOf(SortedSet)
   })
 
+  it.each([
+    ["a tab", "\t", "{\n\ta: [1],\n}"],
+    ["a fractional number", 2.7, "{\n  a: [1],\n}"],
+    ["a number above 10", 20, `{\n${" ".repeat(10)}a: [1],\n}`],
+  ])("indents with %s", (_, space, text) => {
+    expect(JSTN.stringify({ a: [1] }, { a: array(Number) }, space)).toBe(text)
+  })
+
   it("omits an absent optional key and parses it back as absent", () => {
     const { "key with space": _, ...rest } = sampleValue
     const text = JSTN.stringify(rest, S)
@@ -178,6 +186,38 @@ describe("stringify errors", () => {
 })
 
 describe("deep nesting", () => {
+  const kinds: [string, (type: Type<unknown>) => Type<unknown>, (value: unknown) => unknown, string][] = [
+    ["arrays", (type) => array(type), (value) => [value], "[0]"],
+    ["tuples", (type) => tuple(type), (value) => [value], "[0]"],
+    ["objects", (type) => JSTN.schema({ a: type }), (value) => ({ a: value }), ".a"],
+  ]
+
+  function nest(levels: number, wrapType: (type: Type<unknown>) => Type<unknown>, wrapValue: (value: unknown) => unknown): [Type<unknown>, unknown] {
+    let type: Type<unknown> = JSTN.schema(Number)
+    let value: unknown = 1
+    for (let i = 0; i < levels; i++) {
+      type = wrapType(type)
+      value = wrapValue(value)
+    }
+    return [type, value]
+  }
+
+  it.each(kinds)("stringifies 512 levels of %s and refuses 513, as parse does", (_, wrapType, wrapValue, step) => {
+    const [type, value] = nest(512, wrapType, wrapValue)
+    expect(JSTN.parse(JSTN.stringify(value, type), type)).toStrictEqual(value)
+    const [deeper, deeperValue] = nest(513, wrapType, wrapValue)
+    const message = `$${step.repeat(512)}: nesting deeper than 512 levels`
+    expect(failure(() => JSTN.stringify(deeperValue, deeper)).message).toBe(message)
+    expect(failure(() => JSTN.validate(deeperValue, deeper)).message).toBe(message)
+    expect(JSTN.is(deeperValue, deeper)).toBe(false)
+  })
+
+  it("fails with a JSTNError instead of overflowing the stack", () => {
+    const [type, value] = nest(20000, (t) => array(t), (v) => [v])
+    expect(JSTN.is(value, type)).toBe(false)
+    expect(failure(() => JSTN.stringify(value, type)).reason).toBe("nesting deeper than 512 levels")
+  })
+
   it("round-trips a 200-level nested array", () => {
     let type: Type<unknown> = JSTN.schema(Number)
     let value: unknown = 1

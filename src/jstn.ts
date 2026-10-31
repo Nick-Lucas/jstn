@@ -1,6 +1,6 @@
 import { JSTNError } from "./core/error.ts"
 import { toType } from "./core/schema.ts"
-import type { Infer, Schema, Type } from "./core/type.ts"
+import type { Infer, ReadonlyInput, Schema, Type } from "./core/type.ts"
 import { readData } from "./syntax/read-data.ts"
 import { readSchema, type ParseSchemaOptions } from "./syntax/read-schema.ts"
 import { writeData } from "./syntax/write-data.ts"
@@ -9,7 +9,7 @@ export const JSTN = {
   parse<S extends Schema>(text: string, schema: S): Infer<S> {
     return toType(schema).decode(readData(text), [])
   },
-  stringify<S extends Schema>(value: NoInfer<Infer<S>>, schema: S, space?: number | string): string {
+  stringify<S extends Schema>(value: NoInfer<Infer<S> | ReadonlyInput<Infer<S>>>, schema: S, space?: number | string): string {
     return writeData(toType(schema).encode(value, []), space)
   },
   validate<S extends Schema>(value: unknown, schema: S): Infer<S> {

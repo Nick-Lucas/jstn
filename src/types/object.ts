@@ -1,4 +1,4 @@
-import { describeNode, describeValue, JSTNError, mismatch } from "../core/error.ts"
+import { checkDepth, describeNode, describeValue, JSTNError, mismatch } from "../core/error.ts"
 import { formatKey, quote } from "../core/strings.ts"
 import { defineType, type Entry, type Type } from "../core/type.ts"
 
@@ -25,6 +25,7 @@ export function objectType(fields: readonly Field[]): Type<Record<string, unknow
   return defineType(
     name,
     (value, path) => {
+      checkDepth(path.length, path)
       if (!isPlainObject(value)) throw mismatch(name, describeValue(value), path)
       for (const key of Object.keys(value)) {
         if (!known.has(key)) throw new JSTNError("unknown key", [...path, key])

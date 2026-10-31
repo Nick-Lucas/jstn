@@ -145,6 +145,10 @@ describe("registry", () => {
     expect(JSTN.parse("SortedSet[3, 1, 2]", type)).toStrictEqual(new SortedSet([1, 2, 3]))
   })
 
+  it.each(["constructor", "toString", "valueOf", "hasOwnProperty"])("registers %s, a name on Object.prototype", (name) => {
+    expect(read(name, { [name]: Number }).name).toBe("number")
+  })
+
   it("parses with no options at all", () => {
     expect(JSTN.parseSchema("Set<number>").name).toBe("Set<number>")
   })
@@ -240,5 +244,11 @@ describe("depth", () => {
     expect(failure(() => read(nest(513))).message).toBe(
       `$: nesting deeper than 512 levels (line 1, column ${column})`,
     )
+  })
+
+  it("counts array suffixes", () => {
+    expect(read(`number${"[]".repeat(512)}`).name).toBe(`number${"[]".repeat(512)}`)
+    expect(failure(() => read(`number${"[]".repeat(513)}`)).message).toBe("$: nesting deeper than 512 levels (line 1, column 1031)")
+    expect(failure(() => read(`{a:number${"[]".repeat(512)}}`)).message).toBe("$: nesting deeper than 512 levels (line 1, column 1032)")
   })
 })

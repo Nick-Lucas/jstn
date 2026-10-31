@@ -56,6 +56,8 @@ describe("Note payloads through text", () => {
     ["unicode", "héllo 😀", "Note(héllo 😀)"],
     ["inner spaces", "plain words", "Note(plain words)"],
     ["slashes", "https://x.io//a", "Note(https://x.io//a)"],
+    ["lone high surrogate", "a\ud800b", "Note(\"a\\ud800b\")"],
+    ["lone low surrogate", "\udc00", "Note(\"\\udc00\")"],
   ])("round-trips %s", (_, payload, text) => {
     const output = JSTN.stringify(new Note(payload), note)
     expect(output).toBe(text)
@@ -79,6 +81,11 @@ describe("decode failures", () => {
     expect(error.message).toBe("$.price: invalid Money \"abc\": expected \"<amount> <CCY>\" (line 2, column 10)")
     expect(error.cause).toBeInstanceOf(Error)
     expect((error.cause as Error).message).toBe("expected \"<amount> <CCY>\"")
+  })
+
+  it("escapes U+007F in the payload label", () => {
+    const error = fails(() => money.decode({ kind: "tagged", tag: "Money", payload: "x\u007fy", pos }, []))
+    expect(error.message).toBe("$: invalid Money \"x\\u007fy\": expected \"<amount> <CCY>\" (line 2, column 10)")
   })
 
   it("wraps a non-Error thrown by parse", () => {

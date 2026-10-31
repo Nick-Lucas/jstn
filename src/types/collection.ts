@@ -1,4 +1,4 @@
-import { assertTypeName, describeNode, describeValue, guard, JSTNError, mismatch } from "../core/error.ts"
+import { assertTypeName, checkDepth, describeNode, describeValue, guard, JSTNError, mismatch } from "../core/error.ts"
 import { toType } from "../core/schema.ts"
 import { quote } from "../core/strings.ts"
 import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
@@ -12,31 +12,24 @@ export interface CollectionSpec<C, S extends Schema> {
   fromItems(items: Infer<S>[]): C
 }
 
-type ListOptions<C, I> = {
-  tag: string | null
-  name: string
-  item: Type<I>
-  match: (value: unknown) => boolean
-  toItems: (value: C) => Iterable<unknown>
-  fromItems: (items: I[]) => C
-}
-
 type CollectionInfo = { readonly name: string; readonly arity: number }
+type PlainParameters<A extends unknown[]> = number extends A["length"] ? { "define must declare at least one plain parameter": true } : unknown
 
 const COLLECTIONS = new WeakMap<Function, CollectionInfo>()
 
-function listType<C, I>(o: ListOptions<C, I>): Type<C> {
+function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: Pick<CollectionSpec<C, Type<I>>, "match" | "toItems" | "fromItems">): Type<C> {
   return defineType(
-    o.name,
+    name,
     (value, path) => {
-      if (!o.match(value)) throw mismatch(o.name, describeValue(value), path)
-      const items = guard(() => [...o.toItems(value as C)], `cannot stringify ${o.name}`, path)
-      return { kind: "list", tag: o.tag, items: items.map((item, i) => o.item.encode(item, [...path, i])) }
+      checkDepth(path.length, path)
+      if (!spec.match(value)) throw mismatch(name, describeValue(value), path)
+      const items = guard(() => [...spec.toItems(value as C)], `cannot stringify ${name}`, path)
+      return { kind: "list", tag, items: items.map((child, i) => item.encode(child, [...path, i])) }
     },
     (node, path) => {
-      if (node.kind !== "list" || node.tag !== o.tag) throw mismatch(o.name, describeNode(node), path, node.pos)
-      const values = node.items.map((item, i) => o.item.decode(item, [...path, i]))
-      return guard(() => o.fromItems(values), `invalid ${o.name}`, path, node.pos)
+      if (node.kind !== "list" || node.tag !== tag) throw mismatch(name, describeNode(node), path, node.pos)
+      const values = node.items.map((child, i) => item.decode(child, [...path, i]))
+      return guard(() => spec.fromItems(values), `invalid ${name}`, path, node.pos)
     },
   )
 }
@@ -48,25 +41,18 @@ function identity<T>(value: T): T {
 export function array<S extends Schema>(item: S): Type<Infer<S>[]> {
   const type = toType(item)
   const name = isUnion(type) ? `(${type.name})[]` : `${type.name}[]`
-  return listType<Infer<S>[], Infer<S>>({ tag: null, name, item: type, match: Array.isArray, toItems: identity, fromItems: identity })
+  return listType<Infer<S>[], Infer<S>>(null, name, type, { match: Array.isArray, toItems: identity, fromItems: identity })
 }
 
-export function createCollection<A extends Schema[], C, S extends Schema>(
+export function createCollection<A extends [Schema, ...Schema[]], C, S extends Schema>(
   name: string,
-  define: (...args: A) => CollectionSpec<C, S>,
+  define: (...args: A) => CollectionSpec<C, S> & PlainParameters<A>,
 ): (...args: A) => Type<C> {
   assertTypeName(name)
   if (define.length < 1) throw new JSTNError(`createCollection(${quote(name)}) define must declare at least one parameter`, [])
   const factory = (...args: A): Type<C> => {
     const spec = define(...args)
-    return listType<C, Infer<S>>({
-      tag: name,
-      name: `${name}<${args.map((arg) => toType(arg).name).join(", ")}>`,
-      item: toType(spec.items),
-      match: (value) => spec.match(value),
-      toItems: (value) => spec.toItems(value),
-      fromItems: (items) => spec.fromItems(items),
-    })
+    return listType(name, `${name}<${args.map((arg) => toType(arg).name).join(", ")}>`, toType(spec.items), spec)
   }
   COLLECTIONS.set(factory, { name, arity: define.length })
   return factory

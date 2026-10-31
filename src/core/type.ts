@@ -44,10 +44,16 @@ export type Infer<S> =
 
 type OptionalKeys<S> = { [K in keyof S]-?: S[K] extends Optional<unknown> ? K : never }[keyof S]
 type Simplify<T> = { [K in keyof T]: T[K] } & {}
-export type InferShape<S extends Shape> = Simplify<
+export type InferShape<S extends Shape> = [keyof S] extends [never] ? Record<string, never> : Simplify<
   { -readonly [K in Exclude<keyof S, OptionalKeys<S>>]: Infer<S[K]> } &
-  { -readonly [K in OptionalKeys<S>]?: S[K] extends Optional<infer T> ? T : never }
+  { -readonly [K in OptionalKeys<S>]?: (S[K] extends Optional<infer T> ? T : never) | undefined }
 >
+
+export type ReadonlyInput<T> =
+  T extends readonly unknown[] ? { readonly [K in keyof T]: ReadonlyInput<T[K]> } :
+  T extends Function ? T :
+  T extends object ? keyof T extends string ? { readonly [K in keyof T]: ReadonlyInput<T[K]> } : T :
+  T
 
 export function defineType<T>(
   name: string,

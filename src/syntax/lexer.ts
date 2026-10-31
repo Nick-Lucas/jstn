@@ -1,8 +1,6 @@
 import { describeValue } from "../core/error.ts"
-import { quote } from "../core/strings.ts"
+import { IDENT, quote, RAW_FORBIDDEN } from "../core/strings.ts"
 import type { Pos } from "../core/type.ts"
-
-export const MAX_DEPTH = 512
 
 export type Token =
   | { readonly kind: "ident"; readonly value: string; readonly pos: Pos; readonly adjacent: boolean }
@@ -14,10 +12,8 @@ export type Token =
 
 const PUNCT = new Set(["{", "}", "[", "]", "(", ")", ",", ":", "|", "?", "<", ">"])
 const WS = new Set([" ", "\t", "\n", "\r"])
-const IDENT = /[A-Za-z_$][A-Za-z0-9_$]*/y
 const NUMBER = /-?(?:0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/y
 const NUMBER_RUN = /-?(?:[0-9A-Za-z_$.]|(?<=[eE])[+-])*/y
-const ID_START = /[A-Za-z_$]/
 const NUMBER_TAIL = /[A-Za-z0-9_$.]/
 const HEX4 = /[0-9A-Fa-f]{0,4}/y
 const HEX_BRACED = /\{[0-9A-Fa-f]*\}?/y
@@ -36,10 +32,6 @@ const SIMPLE_ESCAPES = new Map([
 function matchAt(pattern: RegExp, source: string, offset: number): string {
   pattern.lastIndex = offset
   return pattern.exec(source)?.[0] ?? ""
-}
-
-function isRawForbidden(code: number): boolean {
-  return code <= 0x1f || code === 0x7f || code === 0x28 || code === 0x22 || code === 0x27 || code === 0x5c
 }
 
 export function describeToken(token: Token): string {
@@ -88,10 +80,25 @@ export class Lexer {
     return true
   }
 
-  expect(punct: string, expected: string): Token {
-    const token = this.peek()
-    if (token.kind !== "punct" || token.value !== punct) return this.unexpected(token, expected)
-    return this.next()
+  expect(punct: string): void {
+    if (!this.eat(punct)) this.unexpected(this.peek(), quote(punct))
+  }
+
+  more(close: string): boolean {
+    if (this.eat(",")) return true
+    if (!this.eat(close)) this.unexpected(this.peek(), `"," or ${quote(close)}`)
+    return false
+  }
+
+  readKey(): Extract<Token, { kind: "ident" | "string" }> {
+    const token = this.next()
+    if (token.kind !== "ident" && token.kind !== "string") return this.unexpected(token, "key")
+    return token
+  }
+
+  expectEnd(): void {
+    const token = this.next()
+    if (token.kind !== "eof") this.unexpected(token, "end of input")
   }
 
   unexpected(token: Token, expected: string): never {
@@ -123,13 +130,12 @@ export class Lexer {
     if (close === -1) return this.#fail("unterminated payload", open)
     let end = close
     while (end > this.#offset && WS.has(source[end - 1] ?? "")) end -= 1
-    for (let i = this.#offset; i < end; i++) {
-      if (isRawForbidden(source.charCodeAt(i))) {
-        this.#offset = i
-        return this.#fail(`invalid character ${quote(source[i] ?? "")} in payload; quote the payload`, this.#pos())
-      }
-    }
     const body = source.slice(this.#offset, end)
+    const bad = body.search(RAW_FORBIDDEN)
+    if (bad !== -1) {
+      this.#offset += bad
+      return this.#fail(`invalid character ${quote(body[bad] ?? "")} in payload; quote the payload`, this.#pos())
+    }
     this.#advanceTo(close + 1)
     return body
   }
@@ -181,10 +187,10 @@ export class Lexer {
     const source = this.#source
     const char = source[this.#offset]
     if (char === undefined) return { kind: "eof", value: "", pos, adjacent }
-    if (ID_START.test(char)) {
-      const value = matchAt(IDENT, source, this.#offset)
-      this.#offset += value.length
-      return { kind: "ident", value, pos, adjacent }
+    const ident = matchAt(IDENT, source, this.#offset)
+    if (ident !== "") {
+      this.#offset += ident.length
+      return { kind: "ident", value: ident, pos, adjacent }
     }
     if (char === "\"" || char === "'") return { kind: "string", value: this.#readString(pos), pos, adjacent }
     if (PUNCT.has(char)) {

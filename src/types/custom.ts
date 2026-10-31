@@ -6,7 +6,7 @@ export interface TypeSpec<T> {
   readonly name: string
   match(value: unknown): boolean
   parse(text: string): T
-  stringify(value: T): string
+  stringify(value: NoInfer<T>): string
 }
 
 export function createType<T>(spec: TypeSpec<T>): Type<T> {

@@ -3,7 +3,7 @@
 This document is the single source of truth for implementing JSTN. Where a detail is not specified here, choose the simplest behaviour that is consistent with this document, then add it to the README.
 
 Base proposal: **simplicity** (one `Type` interface with `encode` and `decode`, a schema-free `Node` tree between text and values, every `Type.name` valid jstn-schema text).
-Grafted from **types**: the `out T` brand, `createCollection(name, define)` as a generic factory (re-verified on TypeScript 7.0.2), `NoInfer` on `stringify`, type tests without `@ts-expect-error`, folder layout by concern, `JSTN.is`.
+Grafted from **types**: the `out T` brand, `createCollection(name, define)` as a generic factory (re-verified on TypeScript 7.0.2), `NoInfer` on `stringify` and `createType`, type tests without `@ts-expect-error`, folder layout by concern, `JSTN.is`.
 Grafted from **format**: a typed `Node` union, the shared lexer with `readPayload`, the precise lexical grammar, the `${path}: ${reason} (line L, column C)` message format, syntax errors that carry paths, the inline scalar list printing rule, rejection of duplicates, and the nesting depth limit.
 
 ---
@@ -59,7 +59,7 @@ The internal symbols `TYPE`, `OPTIONAL`, `defineType`, `toType`, `objectType`, `
 ```ts
 export const JSTN: {
   parse<S extends Schema>(text: string, schema: S): Infer<S>
-  stringify<S extends Schema>(value: NoInfer<Infer<S>>, schema: S, space?: number | string): string
+  stringify<S extends Schema>(value: NoInfer<Infer<S> | ReadonlyInput<Infer<S>>>, schema: S, space?: number | string): string
   validate<S extends Schema>(value: unknown, schema: S): Infer<S>
   is<S extends Schema>(value: unknown, schema: S): value is Infer<S>
   schema<S extends Schema>(schema: S): Type<Infer<S>>
@@ -80,9 +80,10 @@ export const map: <K extends Schema, V extends Schema>(key: K, value: V) => Type
 export function optional<S extends Schema>(schema: S): Optional<Infer<S>>
 
 export function createType<T>(spec: TypeSpec<T>): Type<T>
-export function createCollection<A extends Schema[], C, S extends Schema>(
+type PlainParameters<A extends unknown[]> = number extends A["length"] ? { "define must declare at least one plain parameter": true } : unknown
+export function createCollection<A extends [Schema, ...Schema[]], C, S extends Schema>(
   name: string,
-  define: (...args: A) => CollectionSpec<C, S>,
+  define: (...args: A) => CollectionSpec<C, S> & PlainParameters<A>,
 ): (...args: A) => Type<C>
 
 export class JSTNError extends Error {
@@ -289,10 +290,16 @@ export type Infer<S> =
 
 type OptionalKeys<S> = { [K in keyof S]-?: S[K] extends Optional<unknown> ? K : never }[keyof S]
 type Simplify<T> = { [K in keyof T]: T[K] } & {}
-export type InferShape<S extends Shape> = Simplify<
+export type InferShape<S extends Shape> = [keyof S] extends [never] ? Record<string, never> : Simplify<
   { -readonly [K in Exclude<keyof S, OptionalKeys<S>>]: Infer<S[K]> } &
-  { -readonly [K in OptionalKeys<S>]?: S[K] extends Optional<infer T> ? T : never }
+  { -readonly [K in OptionalKeys<S>]?: (S[K] extends Optional<infer T> ? T : never) | undefined }
 >
+
+export type ReadonlyInput<T> =
+  T extends readonly unknown[] ? { readonly [K in keyof T]: ReadonlyInput<T[K]> } :
+  T extends Function ? T :
+  T extends object ? keyof T extends string ? { readonly [K in keyof T]: ReadonlyInput<T[K]> } : T :
+  T
 
 export function defineType<T>(
   name: string,
@@ -310,18 +317,22 @@ Rules:
 - **`T` appears only in the return type of `decode`.** That makes `Type` covariant (enforced by `out`), so `Type<number>` is assignable to `Type<number | string>`.
 - **`Optional` is not a `Schema`.** This makes `array(optional(number))` a compile error.
 - **The `Infer` order matters.** `Type` is checked first. Object literal types match `Shape` through implicit index signatures. Interfaces and constructors do not match `Shape`.
-- **Optional keys infer as `k?: T`.**
+- **Optional keys infer as `k?: T | undefined`.** `encode` omits an optional field whose value is `undefined`, so the type must admit it. Otherwise, under `exactOptionalPropertyTypes`, `JSTN.is` and `JSTN.validate` would narrow `{ k: undefined }` to a type that rules `undefined` out. `parse` still never produces `undefined`.
+- **The empty shape infers `Record<string, never>`.** `{}` alone would mean any non-nullish value, while the runtime accepts only a plain object with no keys.
+- **`stringify` also accepts readonly input.** `ReadonlyInput<T>` makes arrays and tuples readonly at every depth, through arrays, tuples and objects whose keys are all strings. Objects with symbol keys, such as `Date`, `Set` and `Map`, and functions are left alone, so their names survive in error messages. The parameter is `Infer<S> | ReadonlyInput<Infer<S>>`, so a generic wrapper can still pass a value typed `Infer<S>`. `parse`, `validate` and `is` keep the mutable `Infer<S>`.
+- **`JSTN.is` narrows the `false` branch too.** TypeScript has no one-sided type predicate. The runtime check is stricter than the static type: an invalid `Date`, an object with an extra key, or a class instance checked against a shape fails `is` while still having the static type. The README warns not to rely on the `false` branch. A brand on the predicate type would fix the `false` branch, but it would leak into every narrowed type.
 
 The following claims were verified on TypeScript 7.0.2 with `strict` and `exactOptionalPropertyTypes`:
 
 - The full example in §2.3 infers exactly.
 - `sortedSet(Number)` is `Type<SortedSet<number>>`, and `map(String, BigInt)` is `Type<Map<string, bigint>>`.
-- `JSTN.stringify({ a: "x" }, { a: Number })` is a compile error.
+- `JSTN.stringify({ a: "x" }, { a: Number })` is a compile error, and so is `JSTN.stringify("x", {})`.
 - `union` with one member is a compile error.
 - `JSTN.is` narrows.
-- `createType` infers `T` from `parse` only when `parse` comes before `stringify` in the object literal. If `stringify` comes first, compilation fails loudly. The README documents this, and `createType<Money>({...})` always works.
+- `createType` infers `T` from `parse` only, because `stringify` takes `NoInfer<T>`. So `{ parse: Number, stringify: String }` gives `Type<number>`, not `Type<any>`. Context-sensitive functions are still inferred in order. If `stringify` comes first, `T` is fixed before `parse` is seen: a body that uses the value's members fails to compile, and a body that does not, such as `(m) => String(m)`, silently gives `Type<unknown>`. The README says to write `parse` first, and `createType<Money>({...})` always works.
+- In generic code, `Infer` of a shape that contains a type parameter, such as `Infer<{ value: S }>`, stays deferred. It is not assignable from the spelled-out `{ value: Infer<S> }`. A collection with object items must therefore write its item type as `Infer<{ key: K; value: V }>`. The README shows this.
 
-**The core law.** `t.encode(v)` succeeds if and only if `t.decode(t.encode(v))` succeeds, and the decoded value is deep-equal to `v`. There is one validation path. `encode` validates while it builds a Node, and `decode` validates while it builds a value.
+**The core law.** `t.encode(v)` succeeds if and only if `t.decode(t.encode(v))` succeeds, and the decoded value is deep-equal to `v`. This includes the depth limit: `encode` refuses a value nested deeper than `MAX_DEPTH`, the same as the reader does. There is one validation path. `encode` validates while it builds a Node, and `decode` validates while it builds a value.
 
 ### Dispatch (`src/jstn.ts`)
 
@@ -339,8 +350,10 @@ parseSchema(text, opts) = readSchema(text, opts?.types ?? {})
 ```ts
 export function toType<S extends Schema>(schema: S, path?: Path): Type<Infer<S>>
 export function optional<S extends Schema>(schema: S): Optional<Infer<S>>
-export function isPlainObject(value: unknown): value is Record<string, unknown>
+export function isShorthand(value: unknown): value is Schema
 ```
+
+`isShorthand` is the single list of shorthand constructors. The schema reader uses it to tell a shorthand from a collection factory.
 
 `toType(schema, path = [])` checks these cases in order:
 
@@ -417,7 +430,10 @@ export class Lexer {
   peek(): Token
   next(): Token
   eat(punct: string): boolean
-  expect(punct: string, expected: string): Token
+  expect(punct: string): void
+  more(close: string): boolean
+  readKey(): Extract<Token, { kind: "ident" | "string" }>
+  expectEnd(): void
   unexpected(token: Token, expected: string): never
   readPayload(open: Pos): string
 }
@@ -426,7 +442,7 @@ export function describeToken(token: Token): string
 ```
 
 - **Lookahead.** The lexer buffers at most one token. `peek` fills the buffer and `next` empties it.
-- **`eat` and `expect`.** `eat(p)` consumes the next token if it is the punct `p`. `expect(p, expected)` consumes it or calls `unexpected`.
+- **Grammar helpers shared by both readers.** `eat(p)` consumes the next token if it is the punct `p`. `expect(p)` consumes it or fails with `expected "p"`. `more(close)` consumes a `,` and returns `true`, or consumes `close` and returns `false`, or fails with `expected "," or "close"`. `readKey()` returns an ident or string token, or fails with `expected key`. `expectEnd()` fails with `expected end of input` unless the input is exhausted. Only a punct token matches, so a string such as `":"` never stands in for punctuation.
 - **`unexpected(token, expected)`** fails with `unexpected ${describeToken(token)}, expected ${expected}`. `describeToken` returns:
 
   | Token | Description |
@@ -441,7 +457,7 @@ export function describeToken(token: Token): string
 - **`readPayload(open)`** may only be called while the buffer is empty, immediately after `next()` returned an adjacent `(` token. If anything is buffered it throws an internal `Error`. It scans the raw source up to the next `)` and consumes that `)`, with these rules:
   1. Leading and trailing WS is trimmed.
   2. If the trimmed body starts with `"` or `'`, it must be exactly one `String` token. That string's value is the payload.
-  3. Otherwise the body is raw. It must contain no `(`, `"`, `'`, `\`, U+0000–U+001F or U+007F. A violation gives `invalid character "x" in payload; quote the payload`.
+  3. Otherwise the body is raw. It must contain no `(`, `"`, `'`, `\`, U+0000–U+001F or U+007F. A violation gives `invalid character "x" in payload; quote the payload`. The character set is `RAW_FORBIDDEN` in `core/strings.ts`, shared with the writer.
   4. An empty body is the payload `""`.
   5. Comments are not recognised inside a payload, so `Url(https://x.io//a)` is fine.
   6. If the input ends before `)`, the result is `unterminated payload` at `open`.
@@ -466,7 +482,7 @@ Reader rules:
 - **Position (`pos`) on Node.** Every Node gets the `pos` of its first token. For a tagged value, that is the tag. Each `Entry` gets a `keyPos`.
 - **Tag adjacency.** A `Tag` that is not immediately followed by `(` or `[` fails with `expected "(" or "[" immediately after tag "Foo"`. This means `Date (x)`, `Set [1]` and `Point{}` are all errors.
 - **Duplicate keys** fail with `duplicate key` at the second key's `keyPos`. The error path includes that key.
-- **Depth limit.** Nesting deeper than 512 lists and objects fails with `nesting deeper than 512 levels` at the opening bracket. The limit is the constant `MAX_DEPTH = 512`, defined in `lexer.ts` and shared by both readers.
+- **Depth limit.** Nesting deeper than 512 lists and objects fails with `nesting deeper than 512 levels` at the opening bracket. The limit is the constant `MAX_DEPTH = 512`, defined in `core/error.ts` with `checkDepth(depth, path, pos?)`. Both readers and the list, tuple and object encoders call `checkDepth`, so `stringify` never writes text that `parse` rejects, and `validate` and `is` fail with a `JSTNError` instead of overflowing the stack.
 - **Trailing content** fails with `unexpected <token>, expected end of input`.
 - **Path stack.** The reader keeps a mutable path stack. It pushes the key or index before reading each child and pops it afterwards. The lexer's `fail` callback throws `new JSTNError(reason, [...stack], pos)`, so syntax errors also carry paths.
 - **Punct outside the data grammar.** `|`, `?`, `<` and `>` are not part of data. If they appear in value position, they fail through `unexpected`.
@@ -490,9 +506,9 @@ Name          = Ident ;
 
 - There are no adjacency rules in schema text.
 - `>>` is two `>` tokens, because punct tokens are single characters.
-- Number, bigint and string tokens are rejected except as `Key`.
+- Number and bigint tokens are rejected everywhere. String tokens are allowed only as `Key`.
 - A union with a single member is that member.
-- Nesting deeper than 512 levels is an error.
+- Nesting deeper than 512 levels is an error. `{`, `[`, `(` and `<` each count one level, and so does each `[]` suffix, so `number[][]` is two levels deep.
 
 **Name resolution.** The built-in names are `number`, `string`, `boolean`, `bigint`, `null`, `Date`, `Set` and `Map`. After them come the entries in `options.types`:
 
@@ -554,6 +570,7 @@ export function writeData(node: Node, space?: number | string): string
 **`isRawPayload(s)`** is true when all of these hold:
 
 - `s` is non-empty.
+- `s` is well-formed Unicode (`s.isWellFormed()`). A lone surrogate forces the quoted form, where `quote` escapes it, so the output survives UTF-8 encoding.
 - `s` contains none of `( ) " ' \`, U+0000–U+001F or U+007F.
 - `s` does not start or end with U+0020.
 
@@ -707,7 +724,7 @@ $: unknown type "User" (line 3, column 10)
 $: "Map" expects 2 type arguments, got 1 (line 1, column 1)
 $: cannot redefine built-in type "Date"
 $: not a schema: Array (use array(...))
-$.a: optional() is only valid as an object field
+$: optional() is only valid as an object field
 ```
 
 ---
@@ -721,12 +738,12 @@ export interface TypeSpec<T> {
   readonly name: string
   match(value: unknown): boolean
   parse(text: string): T
-  stringify(value: T): string
+  stringify(value: NoInfer<T>): string
 }
 export function createType<T>(spec: TypeSpec<T>): Type<T>
 ```
 
-- **`name`** is both the data tag and the `Type.name`. `assertTypeName(name)` (in `core/strings.ts`) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]`. Shadowing `Date`, `Set` or `Map` is allowed, so a user can supply an alternative codec. A violation throws `$: invalid type name "x"`.
+- **`name`** is both the data tag and the `Type.name`. `assertTypeName(name)` (in `core/error.ts`, next to the `JSTNError` it throws) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]`. Shadowing `Date`, `Set` or `Map` is allowed, so a user can supply an alternative codec. A violation throws `$: invalid type name "x"`.
 - **encode:**
   1. If `match(v)` is false, throw `expected ${name}, got ${describeValue(v)}`.
   2. Run `guard(() => spec.stringify(v), "cannot stringify " + name)`.
@@ -736,7 +753,7 @@ export function createType<T>(spec: TypeSpec<T>): Type<T>
   1. The node must have kind `tagged` with `tag === name`. Otherwise throw `expected ${name}, got ${describeNode}`.
   2. Run `guard(() => spec.parse(payload), `invalid ${name} ${quote(payload)}`)`.
   3. If `match(result)` is false, throw `invalid ${name} ${quote(payload)}: parse result rejected by match`.
-- `match` returns `boolean`, not a type predicate. `T` is inferred from `parse`. The README states: "write `parse` before `stringify`, or pass the type argument explicitly".
+- `match` returns `boolean`, not a type predicate. `T` is inferred from `parse` only, because `stringify` takes `NoInfer<T>`. The README states: "write `parse` before `stringify`, or pass the type argument explicitly".
 
 ### 6.2 createCollection (`src/types/collection.ts`)
 
@@ -755,35 +772,29 @@ export function collectionInfo(fn: unknown): { readonly name: string; readonly a
 ```
 
 - **Definition-time checks.** `assertTypeName(name)` runs. `define.length` must be at least 1, otherwise throw `$: createCollection("X") define must declare at least one parameter`. The README states "declare type parameters as plain parameters, with no defaults or rest".
+- **Compile-time arity check.** `A extends [Schema, ...Schema[]]` rejects a rest parameter. A define with no parameters, or with a default or optional one, infers no tuple for `A`, so `A` falls back to its constraint, whose length is `number`. `PlainParameters<A>` then adds a required property named `define must declare at least one plain parameter` to the spec, so the returned object fails to type-check with that name in the message. The check sits on the return type because a guard on `define` or `name` would stop TypeScript from keeping a generic `define` generic.
 - **The returned factory** `(...args) =>` does three things:
   1. Calls `const spec = define(...args)`.
   2. Computes `label = `${name}<${args.map((a) => toType(a).name).join(", ")}>``.
-  3. Returns `listType({ tag: name, name: label, item: toType(spec.items), match: spec.match, toItems: spec.toItems, fromItems: spec.fromItems })`.
+  3. Returns `listType(name, label, toType(spec.items), spec)`. `listType` calls the spec's methods on `spec`, so `this` stays bound without wrappers.
 - The factory is registered in a module-level `WeakMap<Function, { name, arity }>`, and `collectionInfo` reads it. The registry in `read-schema.ts` uses `collectionInfo`.
 - `items` is an arbitrary `Schema`, so a collection can hold pairs (`tuple(k, v)`) or objects.
 
 **`listType`** is internal and is the shared core for every list-shaped type:
 
 ```ts
-function listType<C>(o: {
-  tag: string | null
-  name: string
-  item: Type<unknown>
-  match: (v: unknown) => boolean
-  toItems: (v: C) => Iterable<unknown>
-  fromItems: (items: unknown[]) => C
-}): Type<C>
+function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: Pick<CollectionSpec<C, Type<I>>, "match" | "toItems" | "fromItems">): Type<C>
 ```
 
 - **encode:**
-  1. If `match` is false, throw a mismatch.
-  2. `items = [...guard(() => o.toItems(v), "cannot stringify " + name)]`.
+  1. `checkDepth(path.length, path)`, then if `match` is false, throw a mismatch.
+  2. `items = [...guard(() => spec.toItems(v), "cannot stringify " + name)]`.
   3. Encode each item at `[...path, i]`.
   4. Return `{ kind: "list", tag, items }`.
 - **decode:**
-  1. The node must have kind `list` with `tag === o.tag`. Otherwise throw a mismatch with `o.name`.
+  1. The node must have kind `list` with `tag === tag`. Otherwise throw a mismatch with `name`.
   2. Decode each item at `[...path, i]`.
-  3. Return `guard(() => o.fromItems(values), "invalid " + name, path, node.pos)`.
+  3. Return `guard(() => spec.fromItems(values), "invalid " + name, path, node.pos)`.
 
 ### 6.3 How the built-ins are built
 
@@ -791,7 +802,7 @@ function listType<C>(o: {
 |---|---|---|
 | `number`, `string`, `boolean`, `bigint`, null | `scalars.ts` | `literalType(name, kind, test)`: about 10 lines each through `defineType`. These map directly onto literal Node kinds. They are not tagged, so they are not built with `createType` |
 | `date` | `date.ts` | `createType({ name: "Date", match, parse: parseIsoDate, stringify: formatIsoDate })`. This is the public extension API, which proves it is sufficient |
-| `array` | `collection.ts` | `listType({ tag: null, name: arrayName(item), match: Array.isArray, toItems: identity, fromItems: identity })`. It is untagged, so it uses `listType` directly |
+| `array` | `collection.ts` | `listType(null, arrayName(item), item, { match: Array.isArray, toItems: identity, fromItems: identity })`. It is untagged, so it uses `listType` directly |
 | `set` | `collection.ts` | `createCollection("Set", ...)`, where `fromItems` throws `duplicate item` when `new Set(items).size !== items.length` |
 | `map` | `collection.ts` | `createCollection("Map", (k, v) => ({ items: tuple(k, v), ... }))`, where `toItems` is `m.entries()` and `fromItems` throws `duplicate key` when sizes differ |
 | `tuple` | `tuple.ts` | `defineType` directly, because the positions are heterogeneous and the length is fixed |
@@ -830,10 +841,10 @@ src/
   index.ts                   public surface: re-exports exactly the names in §2.1
   jstn.ts                    the JSTN object: parse, stringify, validate, is, schema, parseSchema
   core/
-    strings.ts               isIdent, quote, formatKey, isRawPayload, RESERVED, assertTypeName
-    type.ts                  brands, Type, Optional, Schema, Shape, Infer, InferShape, Node, Entry, Pos, Path, defineType, isType, isOptional
-    error.ts                 JSTNError, formatPath, describeValue, describeNode, mismatch, guard
-    schema.ts                toType (Schema → Type), optional, isPlainObject
+    strings.ts               IDENT, RAW_FORBIDDEN, isIdent, quote, formatKey, isRawPayload, RESERVED
+    type.ts                  brands, Type, Optional, Schema, Shape, Infer, InferShape, ReadonlyInput, Node, Entry, Pos, Path, defineType, isType, isOptional
+    error.ts                 JSTNError, formatPath, describeValue, describeNode, mismatch, guard, assertTypeName, MAX_DEPTH, checkDepth
+    schema.ts                toType (Schema → Type), optional, isShorthand
   types/
     scalars.ts               number, string, boolean, bigint, nullType
     custom.ts                createType and TypeSpec
@@ -843,7 +854,7 @@ src/
     union.ts                 union, isUnion, flattening, best-error selection
     collection.ts            listType, createCollection, collectionInfo, array, set, map
   syntax/
-    lexer.ts                 shared tokenizer: trivia, tokens, positions, readPayload, describeToken, MAX_DEPTH
+    lexer.ts                 shared tokenizer: trivia, tokens, positions, grammar helpers, readPayload, describeToken
     read-data.ts             readData(text): Node; path stack, duplicate keys, tag adjacency, depth limit
     write-data.ts            writeData(node, space): string; compact/pretty rules, scalar spelling
     read-schema.ts           readSchema(text, registry): Type; Registry and ParseSchemaOptions types
@@ -874,6 +885,7 @@ test/
   errors.test.ts             exact-message catalogue (message, reason, path, line, column)
   laws.property.test.ts      round trip, canonical output, name law, total parse, is/stringify agreement
   infer.test-d.ts            type-level tests for Infer and the API signatures
+  compile-errors.test.ts     runs tsc on snippets that must not compile, such as JSTN.stringify("x", {})
   readme.test.ts             README code blocks parse and round-trip
 ```
 
@@ -1153,22 +1165,28 @@ This file is checked by `tsc --noEmit`. It contains no comments and no `@ts-expe
 1. `Infer` of every built-in and shorthand: number, string, boolean, bigint, `Date`, `null`.
 2. Shapes:
    - nested literals
-   - optional keys become `k?: T`, verified with `toEqualTypeOf` against a written-out type
+   - optional keys become `k?: T | undefined`, verified with `toEqualTypeOf` against a written-out type
    - quoted keys
    - `readonly` is removed
+   - the empty shape gives `Record<string, never>`
 3. `tuple` gives a mutable tuple type, and `tuple()` gives `[]`.
 4. `union` gives a union type, including object members and `null`.
 5. `set`, `map` and nested generics: `map(String, set(array(Date)))`.
-6. `createType` infers `T` from `parse`. The explicit form `createType<Money>` also works.
-7. `createCollection` factories give `Type<SortedSet<number>>`.
+6. `createType` infers `T` from `parse`, including `{ parse: Number, stringify: String }`. The explicit form `createType<Money>` also works.
+7. `createCollection` factories give `Type<SortedSet<number>>`. Collections with object items, with one and two type parameters, use the `Infer<{ key: K; value: V }>` spelling.
 8. The full schema `S` from fixtures matches its full expected type exactly.
-9. `JSTN.parse` returns `Infer<S>`. `JSTN.parseSchema` returns `Type<unknown>`, so parsing with it returns `unknown`. `JSTN.is` narrows. `JSTN.validate` returns `Infer<S>`.
-10. Negative facts, written as assignability checks:
+9. `JSTN.parse` returns `Infer<S>`. `JSTN.parseSchema` returns `Type<unknown>`, so parsing with it returns `unknown`. `JSTN.is` narrows, and narrows `{ a?: number | undefined }` for an optional field. `JSTN.validate` returns `Infer<S>`.
+10. `stringify` accepts an optional field typed `T | undefined`, readonly arrays, readonly tuples, `as const` data, and a value typed `Infer<S>` inside a generic function.
+11. Negative facts, written as assignability checks:
     - `expectTypeOf<Optional<number> extends Schema ? true : false>().toEqualTypeOf<false>()`
     - the same check for `MapConstructor`, `SetConstructor`, `ArrayConstructor` and `ObjectConstructor`
     - `expectTypeOf<[Schema] extends Parameters<typeof union> ? true : false>().toEqualTypeOf<false>()`
-    - `expectTypeOf(JSTN.stringify<typeof S>).parameter(0).toEqualTypeOf<Expected>()`
+    - `expectTypeOf<Expected>().toExtend<Parameters<typeof JSTN.stringify<typeof S>>[0]>()`
     - `Type<number>` is assignable to `Type<number | string>`, which shows covariance
+
+### test/compile-errors.test.ts
+
+Type tests cannot assert a compile error without `@ts-expect-error`, which is a comment. This file writes each snippet to a temporary project that extends `tsconfig.json`, runs `tsc --noEmit` once, and checks that every error falls on the snippet's line. The snippets are an inferred `JSTN.stringify` with a wrong field, array item or `Set` item, `JSTN.stringify("x", {})` and `JSTN.stringify({ a: 1 }, {})`, a `createType` whose `stringify` does not take the `parse` result, and `createCollection` with no parameters, a rest parameter or a default parameter. A matching `stringify` call is the control and must compile.
 
 ### test/syntax/read-data.test.ts (unit B)
 
@@ -1273,7 +1291,7 @@ Golden strings are written inline with `toBe`.
 3. `validate` returns the same reference and throws on a mismatch. `is` returns true or false, and rethrows non-`JSTNError` exceptions.
 4. `parseSchema` with the fixture registry, followed by parse and stringify.
 5. `stringify` throws on a mismatch, and the error has no position.
-6. Deep nesting: a 200-level nested array schema and value round-trip.
+6. Deep nesting: a 200-level nested array schema and value round-trip. For arrays, tuples and objects, 512 levels stringify and parse back, and 513 levels fail `stringify` and `validate` with `nesting deeper than 512 levels` while `is` returns `false`. At 20000 levels `is` returns `false` instead of overflowing the stack.
 
 ### test/errors.test.ts (unit C)
 
@@ -1305,7 +1323,7 @@ Properties, each with `numRuns` set to 300:
 
 ### test/readme.test.ts (unit C)
 
-1. The test extracts the fenced blocks from `README.md`.
+1. The test extracts the fenced blocks from `README.md`, which it locates relative to the test file, not the working directory.
 2. Every ```` ```jstn-schema ```` block parses with `{ types: registry }`.
 3. Every ```` ```jstn ```` block parses against the nearest preceding `jstn-schema` block, and `parse(stringify(parse(x)))` is stable.
 4. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed.

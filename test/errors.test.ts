@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
 import { toType } from "../src/core/schema.ts"
 import { JSTN, JSTNError, array, createCollection, createType, map, optional, set, tuple, union } from "../src/index.ts"
-import type { Infer, Schema } from "../src/index.ts"
+import type { CollectionSpec, Infer, Schema } from "../src/index.ts"
 import { Money, S, money, note, registry, sampleValue, sortedSet } from "./support/fixtures.ts"
 
 class Point {
@@ -37,6 +37,7 @@ const extraKey = `{\n  someNum: 1, someStr: "value",\n  someDate: Date(2026-01-0
 const parse = (text: string, schema: Schema) => () => JSTN.parse(text, schema)
 const schemaText = (text: string, types = {}) => () => JSTN.parseSchema(text, { types })
 const loose = (value: unknown) => value as Schema
+const parameterless = (() => ({ items: Number, match: () => true, toItems: (v: number[]) => v, fromItems: (v: number[]) => v })) as unknown as (item: Schema) => CollectionSpec<number[], NumberConstructor>
 const deepPath = `$${"[0]".repeat(512)}`
 
 type Row = [string, () => unknown, string, string, number | undefined, number | undefined]
@@ -115,7 +116,7 @@ const rows: Row[] = [
 
   ["bad custom name", () => createType({ name: "x y", match: () => true, parse: (t) => t, stringify: (t) => t }), "$: invalid type name \"x y\"", "$", undefined, undefined],
   ["reserved collection name", () => createCollection("number", (s: Schema) => ({ items: s, match: () => true, toItems: (v: unknown[]) => v, fromItems: (v: unknown[]) => v })), "$: invalid type name \"number\"", "$", undefined, undefined],
-  ["parameterless define", () => createCollection("Bag", () => ({ items: Number, match: () => true, toItems: (v: number[]) => v, fromItems: (v: number[]) => v })), "$: createCollection(\"Bag\") define must declare at least one parameter", "$", undefined, undefined],
+  ["parameterless define", () => createCollection("Bag", parameterless), "$: createCollection(\"Bag\") define must declare at least one parameter", "$", undefined, undefined],
   ["one-member union", () => union(...([Number] as unknown as [Schema, Schema])), "$: union() needs at least 2 members", "$", undefined, undefined],
   ["Set constructor", () => JSTN.schema(loose(Set)), "$: not a schema: Set (use set(...))", "$", undefined, undefined],
   ["Map constructor", () => JSTN.schema(loose(Map)), "$: not a schema: Map (use map(...))", "$", undefined, undefined],
@@ -136,6 +137,10 @@ const rows: Row[] = [
   ["missing field comma", schemaText("{ a: number b: string }"), "$: unexpected identifier \"b\", expected \",\" or \"}\" (line 1, column 13)", "$", 1, 13],
   ["missing tuple comma", schemaText("[number string]"), "$: unexpected identifier \"string\", expected \",\" or \"]\" (line 1, column 9)", "$", 1, 9],
   ["schema number key", schemaText("{ 1: number }"), "$: unexpected number 1, expected key (line 1, column 3)", "$", 1, 3],
+  ["data string as colon", parse("{a \":\" 1}", { a: Number }), "$.a: unexpected string \":\", expected \":\" (line 1, column 4)", "$.a", 1, 4],
+  ["data string as bracket", parse("[1 \"]\"", array(Number)), "$: unexpected string \"]\", expected \",\" or \"]\" (line 1, column 4)", "$", 1, 4],
+  ["schema string as colon", schemaText("{a \":\" number}"), "$: unexpected string \":\", expected \":\" (line 1, column 4)", "$", 1, 4],
+  ["schema string as bracket", schemaText("Set<number \">\""), "$: unexpected string \">\", expected \",\" or \">\" (line 1, column 12)", "$", 1, 12],
   ["schema missing colon", schemaText("{ a number }"), "$: unexpected identifier \"number\", expected \":\" (line 1, column 5)", "$", 1, 5],
   ["schema trailing content", schemaText("number string"), "$: unexpected identifier \"string\", expected end of input (line 1, column 8)", "$", 1, 8],
   ["schema nesting", schemaText(`${"(".repeat(513)}number${")".repeat(513)}`), "$: nesting deeper than 512 levels (line 1, column 513)", "$", 1, 513],

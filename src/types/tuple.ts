@@ -1,4 +1,4 @@
-import { describeNode, describeValue, mismatch } from "../core/error.ts"
+import { checkDepth, describeNode, describeValue, mismatch } from "../core/error.ts"
 import { toType } from "../core/schema.ts"
 import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
 
@@ -9,6 +9,7 @@ export function tuple<const T extends readonly Schema[]>(...items: T): Type<{ -r
   return defineType(
     name,
     (value, path) => {
+      checkDepth(path.length, path)
       if (!Array.isArray(value)) throw mismatch(name, describeValue(value), path)
       if (value.length !== types.length) throw mismatch(count, String(value.length), path)
       return { kind: "list", tag: null, items: types.map((t, i) => t.encode(value[i], [...path, i])) }

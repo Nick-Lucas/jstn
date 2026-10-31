@@ -3,6 +3,8 @@ import type { Node, Path, Pos } from "./type.ts"
 
 const MAX_QUOTED = 40
 
+export const MAX_DEPTH = 512
+
 export class JSTNError extends Error {
   override readonly name = "JSTNError"
   readonly reason: string
@@ -89,4 +91,8 @@ export function guard<R>(run: () => R, prefix: string, path: Path, pos?: Pos): R
 
 export function assertTypeName(name: string): void {
   if (!isIdent(name) || RESERVED.includes(name)) throw new JSTNError(`invalid type name ${quote(name)}`, [])
+}
+
+export function checkDepth(depth: number, path: Path, pos?: Pos): void {
+  if (depth >= MAX_DEPTH) throw new JSTNError(`nesting deeper than ${MAX_DEPTH} levels`, path, pos)
 }

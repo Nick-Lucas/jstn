@@ -1,6 +1,6 @@
 export const RESERVED: readonly string[] = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]
 
-const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/
+export const IDENT = /[A-Za-z_$][A-Za-z0-9_$]*/y
 const NEEDS_ESCAPE = /["\\\u0000-\u001f\u007f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
 const SHORT_ESCAPES = new Map([
   ["\"", "\\\""],
@@ -11,10 +11,11 @@ const SHORT_ESCAPES = new Map([
   ["\r", "\\r"],
   ["\t", "\\t"],
 ])
-const RAW_FORBIDDEN = /[()"'\\\u0000-\u001f\u007f]/
+export const RAW_FORBIDDEN = /[()"'\\\u0000-\u001f\u007f]/
 
 export function isIdent(text: string): boolean {
-  return IDENT.test(text)
+  IDENT.lastIndex = 0
+  return IDENT.exec(text)?.[0] === text
 }
 
 function escapeChar(char: string): string {
@@ -30,5 +31,5 @@ export function formatKey(key: string): string {
 }
 
 export function isRawPayload(payload: string): boolean {
-  return payload !== "" && !RAW_FORBIDDEN.test(payload) && !payload.startsWith(" ") && !payload.endsWith(" ")
+  return payload !== "" && payload.isWellFormed() && !RAW_FORBIDDEN.test(payload) && !payload.startsWith(" ") && !payload.endsWith(" ")
 }

@@ -53,6 +53,10 @@ describe("trivia", () => {
     expect(values(" \t1\n2\r3\r\n4 ")).toStrictEqual([["number", 1], ["number", 2], ["number", 3], ["number", 4]])
   })
 
+  it("ends a line comment at a lone CR", () => {
+    expect(lex("1 // c\r2")[1]).toStrictEqual({ kind: "number", value: 2, pos: { line: 2, column: 1 }, adjacent: false })
+  })
+
   it("accepts a line comment at the end of input", () => {
     expect(values("1 // trailing")).toStrictEqual([["number", 1]])
     expect(values("1//")).toStrictEqual([["number", 1]])
@@ -156,6 +160,7 @@ describe("strings", () => {
     ["\"ab\\u{110000}\"", "invalid escape \"\\u{110000}\"", 4],
     ["\"\\u{}\"", "invalid escape \"\\u{}\"", 2],
     ["\"\\u{12\"", "invalid escape \"\\u{12\"", 2],
+    ["\"\\😀\"", "invalid escape \"\\😀\"", 2],
   ])("rejects the escape in %s", (source, reason, column) => {
     expect(lexError(source)).toBe(`$: ${reason} (line 1, column ${column})`)
   })
@@ -177,6 +182,10 @@ describe("punctuation", () => {
 
   it.each(["@", "#", ";", "/", "*", "="])("rejects %s", (char) => {
     expect(lexError(`1 ${char}`)).toBe(`$: unexpected character "${char}" (line 1, column 3)`)
+  })
+
+  it.each([["\f", "\\f"], ["\v", "\\u000b"], ["\u00a0", "\u00a0"], ["\u2028", "\u2028"], ["\u3000", "\u3000"]])("rejects the non-JSON whitespace %j", (char, shown) => {
+    expect(lexError(`${char}1`)).toBe(`$: unexpected character "${shown}" (line 1, column 1)`)
   })
 })
 
@@ -268,15 +277,10 @@ describe("helpers", () => {
     expect(lexer.peek().kind).toBe("eof")
   })
 
-  it("expect returns the matching punct", () => {
-    const lexer = new Lexer(" :", fail)
-    expect(lexer.expect(":", "\":\"")).toStrictEqual({ kind: "punct", value: ":", pos: { line: 1, column: 2 }, adjacent: false })
-  })
-
-  it("expect fails through unexpected on anything else", () => {
-    const lexer = new Lexer("a b", fail)
-    lexer.next()
-    expect(messageOf(() => lexer.expect(":", "\":\""))).toBe("$: unexpected identifier \"b\", expected \":\" (line 1, column 3)")
+  it("expect consumes the matching punct and fails through unexpected on anything else", () => {
+    const lexer = new Lexer(" : b", fail)
+    lexer.expect(":")
+    expect(messageOf(() => lexer.expect(":"))).toBe("$: unexpected identifier \"b\", expected \":\" (line 1, column 4)")
   })
 
   it("unexpected names the token and the expectation", () => {

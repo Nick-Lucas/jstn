@@ -217,7 +217,7 @@ describe("createCollection validation", () => {
   })
 
   it("rejects a define with no parameters", () => {
-    const error = fails(() => createCollection("X", () => define(Number)))
+    const error = fails(() => createCollection("X", (() => define(Number)) as unknown as typeof define))
     expect(error.message).toBe("$: createCollection(\"X\") define must declare at least one parameter")
   })
 })

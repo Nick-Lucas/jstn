@@ -47,7 +47,7 @@ describe("formatKey", () => {
 })
 
 describe("isRawPayload", () => {
-  it.each(["2026-01-01T14:00:00Z", "12.50 GBP", "https://x.io//a", "a", "inner  spaces", "日本", "/* not a comment */"])(
+  it.each(["2026-01-01T14:00:00Z", "12.50 GBP", "https://x.io//a", "a", "inner  spaces", "日本", "😀", "/* not a comment */"])(
     "accepts %j",
     (payload) => {
       expect(isRawPayload(payload)).toBe(true)
@@ -68,6 +68,8 @@ describe("isRawPayload", () => {
     ["U+007F", "a\u007fb"],
     ["newline", "a\nb"],
     ["tab", "a\tb"],
+    ["lone high surrogate", "a\ud800b"],
+    ["lone low surrogate", "\udc00"],
   ])("rejects %s", (_name, payload) => {
     expect(isRawPayload(payload)).toBe(false)
   })

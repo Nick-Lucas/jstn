@@ -69,7 +69,9 @@ A `Schema` is one of these:
 
 The builders are `array(item)`, `tuple(...items)`, `union(a, b, ...rest)`, `set(item)`, `map(key, value)`, `optional(schema)`, `createType(spec)` and `createCollection(name, define)`. `JSTN.schema(schema)` returns the normalised `Type`, and `Infer<typeof T>` gives its TypeScript type. `Array`, `Set`, `Map` and `Object` are compile errors and throw at runtime with a hint such as `$: not a schema: Array (use array(...))`.
 
-Object types are strict. An unknown key fails with `unknown key` in both directions. An `optional(...)` field may be absent, and `stringify` omits a field whose value is `undefined`. `parse` never produces `undefined`. A required field that holds `undefined` fails. `optional()` is valid only as an object field.
+Object types are strict. An unknown key fails with `unknown key` in both directions. An `optional(...)` field may be absent, and `stringify` omits a field whose value is `undefined`, so its inferred type is `k?: T | undefined`. `parse` never produces `undefined`. A required field that holds `undefined` fails. `optional()` is valid only as an object field. The empty shape `{}` infers `Record<string, never>`, because it accepts only an object with no keys.
+
+`stringify` also accepts readonly arrays and tuples, at any depth, so `as const` data and frozen arrays type-check. `parse` and `validate` return mutable types.
 
 A union tries its members in declaration order, and the first member that succeeds wins. Put the narrower member first. Tags remove most ambiguity, because `1` and `1n`, `[...]` and `Set[...]`, and `"..."` and `Date(...)` are different nodes. When every member fails, the error with the deepest path is reported. If no member got past the union itself, the error is `expected A | B, got ...`.
 
@@ -105,7 +107,7 @@ A union tries its members in declaration order, and the first member that succee
 
 ## Define custom types and collections
 
-`createType` makes a tagged scalar. `parse` receives the payload text and `stringify` returns it. The writer quotes the payload when needed, so your code never escapes anything. Write `parse` before `stringify` so that TypeScript infers `T`, or pass the type argument explicitly as `createType<Money>({...})`.
+`createType` makes a tagged scalar. `parse` receives the payload text and `stringify` returns it. The writer quotes the payload when needed, so your code never escapes anything. TypeScript infers `T` from `parse` only, so `{ parse: Number, stringify: String }` gives `Type<number>`. Write `parse` before `stringify`. If `stringify` comes first, `T` can be inferred as `unknown`. You can also pass the type argument explicitly as `createType<Money>({...})`.
 
 ```ts
 const money = createType({
@@ -120,7 +122,7 @@ const money = createType({
 })
 ```
 
-`createCollection` makes a tagged list type. Declare type parameters as plain parameters, with no defaults or rest. `items` may be any schema, so a collection can hold pairs or objects.
+`createCollection` makes a tagged list type. Declare type parameters as plain parameters, with no defaults or rest. A `define` with no parameters, or with a rest, default or optional parameter, is a compile error, and one with no declared parameters also throws at runtime. `items` may be any schema, so a collection can hold pairs or objects.
 
 ```ts
 const sortedSet = createCollection("SortedSet", <S extends Schema>(item: S) => ({
@@ -131,11 +133,24 @@ const sortedSet = createCollection("SortedSet", <S extends Schema>(item: S) => (
 }))
 ```
 
+For object items, write the item type as `Infer<{ ... }>` over the parameters. In generic code, TypeScript cannot match `Infer<{ key: K; value: V }>` with the spelled-out `{ key: Infer<K>; value: Infer<V> }`.
+
+```ts
+const entries = createCollection("Entries", <K extends Schema, V extends Schema>(key: K, value: V) => ({
+  items: { key, value },
+  match: (v: unknown) => v instanceof Entries,
+  toItems: (v: Entries<Infer<{ key: K; value: V }>>) => v.items,
+  fromItems: (items: Infer<{ key: K; value: V }>[]) => new Entries(items),
+}))
+```
+
 A name must be an identifier other than `true`, `false`, `null`, `NaN`, `Infinity`, `number`, `string`, `boolean` and `bigint`. Errors thrown by `parse`, `stringify`, `toItems` and `fromItems` are wrapped in a `JSTNError` that keeps the original as `cause`.
 
 ## Validate without serialising
 
 `JSTN.validate(value, schema)` returns the same value typed as `Infer<S>`, or throws a `JSTNError`. `JSTN.is(value, schema)` returns `true` exactly when `validate` would not throw, and it narrows the type. Errors that are not `JSTNError` propagate from both.
+
+Trust the `true` branch of `is` only. TypeScript also narrows the `false` branch, but the runtime check is stricter than the static type. An invalid `Date`, an object with an extra key, and a class instance checked against an object shape all fail `is`, yet TypeScript still gives them the type you checked against. In `if (JSTN.is(d, Date)) ... else ...` with `d: Date | string`, the `else` branch can still hold a `Date`.
 
 ## Read errors
 
@@ -190,7 +205,7 @@ With `space` set to `2`, a value for the text schema in the previous section is 
 }
 ```
 
-A key is written bare when it is an identifier, including keywords such as `null`, and quoted otherwise. Strings are always written with double quotes. A payload is written raw when it is not empty, contains none of `( ) " ' \` or control characters, and does not start or end with a space. Otherwise it is quoted. A date is written with `toISOString()`, with `.000Z` shortened to `Z`.
+A key is written bare when it is an identifier, including keywords such as `null`, and quoted otherwise. Strings are always written with double quotes. A payload is written raw when it is not empty, contains none of `( ) " ' \`, control characters or lone surrogates, and does not start or end with a space. Otherwise it is quoted, and lone surrogates are escaped as in strings. A date is written with `toISOString()`, with `.000Z` shortened to `Z`.
 
 ## Reference grammars
 
@@ -252,10 +267,10 @@ Name          = Ident ;
 These details apply on top of the grammars:
 
 - A payload body is trimmed. A quoted payload must be one string and nothing else, so `X("a" b)` fails with `expected ")" after quoted payload`. Comments are not recognised inside a payload.
-- Nesting deeper than 512 levels fails in both languages. Data counts lists and objects. Schema text counts `{`, `[`, `(` and `<`.
-- In schema text, `>>` is two tokens, and number, string and bigint tokens are allowed only as keys. `Set<>` fails with `"Set" expects 1 type argument, got 0`.
+- Nesting deeper than 512 levels fails in both languages. Data counts lists and objects. Schema text counts `{`, `[`, `(` and `<`, and each `[]` suffix. `stringify`, `validate` and `is` apply the same limit to values, so `stringify` never writes data that `parse` rejects.
+- In schema text, `>>` is two tokens. Number and bigint tokens are never valid, and string tokens are allowed only as keys. `Set<>` fails with `"Set" expects 1 type argument, got 0`.
 - Schema text errors always have path `$`. Registry errors are raised before reading starts and have no position.
 
 ## Requirements
 
-JSTN needs Node 26 or later and is ESM only. Consumers need TypeScript 5.4 or later, because `stringify` uses `NoInfer`. There are no runtime dependencies.
+JSTN needs Node 26 or later and is ESM only. Consumers need TypeScript 5.4 or later, because `stringify` and `createType` use `NoInfer`. There are no runtime dependencies.

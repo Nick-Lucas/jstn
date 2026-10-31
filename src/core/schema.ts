@@ -4,8 +4,6 @@ import { bigint, boolean, nullType, number, string } from "../types/scalars.ts"
 import { describeValue, JSTNError } from "./error.ts"
 import { isOptional, isType, OPTIONAL, type Infer, type Optional, type Path, type Schema, type Type } from "./type.ts"
 
-export { isPlainObject }
-
 const SHORTHANDS = new Map<unknown, Type<unknown>>([
   [Number, number],
   [String, string],
@@ -34,6 +32,10 @@ function normalise(schema: unknown, path: Path): Type<unknown> {
   if (isOptional(schema)) throw new JSTNError("optional() is only valid as an object field", path)
   if (isPlainObject(schema)) return objectType(Object.keys(schema).map((key) => toField(key, schema[key], [...path, key])))
   throw new JSTNError(`not a schema: ${HINTS.get(schema) ?? describeValue(schema)}`, path)
+}
+
+export function isShorthand(value: unknown): value is Schema {
+  return SHORTHANDS.has(value)
 }
 
 export function toType<S extends Schema>(schema: S, path: Path = []): Type<Infer<S>> {

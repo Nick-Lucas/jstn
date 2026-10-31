@@ -8,7 +8,7 @@ type Block = { readonly lang: string; readonly body: string; readonly line: numb
 type FileSystem = { readFileSync(path: string, encoding: "utf8"): string }
 
 const fs: FileSystem = await import("node:fs" as string)
-const readme = fs.readFileSync("README.md", "utf8")
+const readme = fs.readFileSync(`${(import.meta as { dirname: string }).dirname}/../README.md`, "utf8")
 
 const blocks: Block[] = [...readme.matchAll(/^```(\S*)\n([\s\S]*?)^```$/gm)].map((match) => ({
   lang: match[1] ?? "",

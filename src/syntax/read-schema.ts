@@ -1,5 +1,5 @@
-import { assertTypeName, JSTNError } from "../core/error.ts"
-import { optional, toType } from "../core/schema.ts"
+import { assertTypeName, checkDepth, JSTNError } from "../core/error.ts"
+import { isShorthand, optional, toType } from "../core/schema.ts"
 import { quote } from "../core/strings.ts"
 import type { Optional, Pos, Schema, Type } from "../core/type.ts"
 import { array, collectionInfo, map, set } from "../types/collection.ts"
@@ -7,7 +7,7 @@ import { date } from "../types/date.ts"
 import { bigint, boolean, nullType, number, string } from "../types/scalars.ts"
 import { tuple } from "../types/tuple.ts"
 import { union } from "../types/union.ts"
-import { Lexer, MAX_DEPTH, type Token } from "./lexer.ts"
+import { Lexer, type Token } from "./lexer.ts"
 
 export type Registry = Readonly<Record<string, Schema | ((...args: any[]) => Type<any>)>>
 
@@ -20,11 +20,6 @@ type Named =
   | { readonly kind: "generic"; readonly arity: number; readonly build: (args: Type<unknown>[]) => Type<unknown> }
 
 const BUILTINS: Registry = { number, string, boolean, bigint, null: nullType, Date: date, Set: set, Map: map }
-const SHORTHANDS = new Set<unknown>([Number, String, Boolean, BigInt, Date])
-
-function isShorthand(value: unknown): value is Schema {
-  return SHORTHANDS.has(value)
-}
 
 function resolve(name: string, value: Registry[string]): Named {
   if (typeof value !== "function" || isShorthand(value)) return { kind: "type", type: toType(value) }
@@ -53,7 +48,7 @@ function fail(reason: string, pos: Pos): never {
 }
 
 function enter(open: Token, depth: number): number {
-  if (depth >= MAX_DEPTH) fail(`nesting deeper than ${MAX_DEPTH} levels`, open.pos)
+  checkDepth(depth, [], open.pos)
   return depth + 1
 }
 
@@ -65,10 +60,7 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
     const items: R[] = []
     while (!lexer.eat(close)) {
       items.push(readItem())
-      if (!lexer.eat(",")) {
-        lexer.expect(close, `"," or ${quote(close)}`)
-        break
-      }
+      if (!lexer.more(close)) break
     }
     return items
   }
@@ -84,8 +76,9 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
 
   function readPostfix(depth: number): Type<unknown> {
     let type = readPrimary(depth)
-    while (lexer.eat("[")) {
-      lexer.expect("]", "\"]\"")
+    for (let level = depth, open = lexer.peek(); lexer.eat("["); open = lexer.peek()) {
+      level = enter(open, level)
+      lexer.expect("]")
       type = array(type)
     }
     return type
@@ -101,7 +94,7 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
     }
     if (token.kind === "punct" && token.value === "(") {
       const type = readType(enter(token, depth))
-      lexer.expect(")", "\")\"")
+      lexer.expect(")")
       return type
     }
     return lexer.unexpected(token, "type")
@@ -130,11 +123,10 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
   function readObject(depth: number): Type<unknown> {
     const shape: Record<string, Schema | Optional<unknown>> = Object.create(null)
     readItems("}", () => {
-      const key = lexer.next()
-      if (key.kind !== "ident" && key.kind !== "string") return lexer.unexpected(key, "key")
+      const key = lexer.readKey()
       if (Object.hasOwn(shape, key.value)) fail(`duplicate key ${quote(key.value)}`, key.pos)
       const isOptional = lexer.eat("?")
-      lexer.expect(":", "\":\"")
+      lexer.expect(":")
       const type = readType(depth)
       const value = isOptional ? optional(type) : type
       Object.defineProperty(shape, key.value, { value, enumerable: true, writable: true, configurable: true })
@@ -143,7 +135,6 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
   }
 
   const type = readType(0)
-  const end = lexer.next()
-  if (end.kind !== "eof") lexer.unexpected(end, "end of input")
+  lexer.expectEnd()
   return type
 }
