@@ -1,5 +1,5 @@
 import { expectTypeOf } from "vitest"
-import { JSTN, array, bigint, boolean, createCollection, createType, date, map, number, optional, set, string, tuple, union } from "../src/index.ts"
+import { JSTN, array, bigint, boolean, createCollection, createType, date, map, number, optional, set, string, tuple, union, unknown } from "../src/index.ts"
 import type { Infer, Optional, Schema, Type } from "../src/index.ts"
 import { Money, S, SortedSet, money, sortedSet } from "./support/fixtures.ts"
 
@@ -173,3 +173,11 @@ expectTypeOf(acceptStandard(S)).toEqualTypeOf<Expected>()
 expectTypeOf(acceptStandard(JSTN.schema({ a: Number, b: optional(set(String)) }))).toEqualTypeOf<{ a: number; b?: Set<string> | undefined }>()
 expectTypeOf(acceptStandard(sortedSet(Date))).toEqualTypeOf<SortedSet<Date>>()
 expectTypeOf(acceptStandard(number)).toEqualTypeOf<number>()
+
+expectTypeOf(unknown).toEqualTypeOf<Type<unknown>>()
+expectTypeOf<Infer<{ meta: typeof unknown; list: Type<unknown[]> }>>().toEqualTypeOf<{ meta: unknown; list: unknown[] }>()
+expectTypeOf(JSTN.parse("")).toEqualTypeOf<unknown>()
+expectTypeOf(JSTN.parse("", undefined)).toEqualTypeOf<unknown>()
+expectTypeOf(JSTN.stringify(new Map([[1, new Set([new Date()])]]))).toEqualTypeOf<string>()
+expectTypeOf(JSTN.stringify({ a: 1 }, undefined, 2)).toEqualTypeOf<string>()
+expectTypeOf(JSTN.transformer.deserialize(JSTN.transformer.serialize({ a: 1 }))).toEqualTypeOf<unknown>()

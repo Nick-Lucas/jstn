@@ -15,16 +15,17 @@ Grafted from **format**: a typed `Node` union, the shared lexer with `readPayloa
 1. **Part 1, Schemas.** Structure-only validators that are type-safe at runtime and at build time. There are two ways to write them: the TypeScript builder API (`JSTN.schema({...})`) and the jstn-schema text language (`JSTN.parseSchema(text)`). The text language uses the builder syntax, so the same text works in both places. Both produce the same `Type` objects.
 2. **The paste property.** Every `Type.name` is schema text that is also valid TypeScript. Pasting `t.name` into `JSTN.schema(...)`, with the builders and the registered custom types in scope under their camelCase names, compiles and gives a type with the same name and the same `Infer` type.
 3. **Part 2, Serialisation.** A data format that looks like JavaScript literals. `JSTN.parse(text, schema)` and `JSTN.stringify(value, schema, space?)` both validate against the schema.
-4. An API that a `JSON.*` user already knows, with the schema in place of JSON's second argument.
-5. Extensibility through `createType` (tagged scalars) and `createCollection` (tagged containers). Built-ins use the same machinery where it fits: `date` uses `createType`, and `set` and `map` use `createCollection`.
-6. A small codebase that is easy to read. Every file has one job and stays under 300 lines. There are zero runtime dependencies.
-7. Comprehensive tests: example tests per module, an exact-message error catalogue, fast-check properties, type-level tests and a compile test of pasted names.
+4. An API that a `JSON.*` user already knows, with the schema in place of JSON's second argument. The schema is optional.
+5. **Schema-less mode.** Without a schema, `JSTN.parse(text)` and `JSTN.stringify(value)` use the `unknown` type, which encodes any supported value by inspecting it (§6.4). Custom types and collections join it through `JSTN.register`. `JSTN.transformer` plugs the same mode into tRPC as a data transformer.
+6. Extensibility through `createType` (tagged scalars) and `createCollection` (tagged containers). Built-ins use the same machinery where it fits: `date` uses `createType`, `set` and `map` use `createCollection`, and all three reach `unknown` through `register`.
+7. A small codebase that is easy to read. Every file has one job and stays under 300 lines. There are zero runtime dependencies.
+8. Comprehensive tests: example tests per module, an exact-message error catalogue, fast-check properties, type-level tests, a compile test of pasted names, and a real tRPC round trip.
 
 ### Non-goals (v1)
 
 - Recursive schemas (`lazy`). This is the first planned extension.
 - Literal and enum types (`"a" | "b"`), refinements (`min`, `max`, `finite`), and passthrough of unknown keys.
-- Schema-less parsing (`JSTN.parse(text)` without a schema).
+- Scoped registries. `JSTN.register` writes one module-level registry. Global state is a deliberate choice, made at the user's request.
 - Static types for text schemas. `parseSchema` returns `Type<unknown>`.
 - Hex, octal and binary number literals, numeric separators, and Unicode identifiers as bare keys.
 - Newline-separated object entries. Commas are required, and the missing commas in the request's samples are treated as typos.
@@ -47,6 +48,8 @@ export { createType } from "./types/custom.ts"
 export { tuple } from "./types/tuple.ts"
 export { union } from "./types/union.ts"
 export { array, set, map, createCollection } from "./types/collection.ts"
+export { unknown } from "./types/unknown.ts"
+export type { Registrable } from "./types/unknown.ts"
 export type { Type, Schema, Shape, Optional, Infer, InferShape, Node, Entry, Pos, Path } from "./core/type.ts"
 export type { Class, Match, Named, TypeSpec } from "./types/custom.ts"
 export type { StandardSchemaV1, StandardSchemaV1Props, StandardSchemaV1Result, StandardSchemaV1Issue } from "./core/standard.ts"
@@ -54,18 +57,29 @@ export type { CollectionSpec } from "./types/collection.ts"
 export type { Registry, ParseSchemaOptions } from "./syntax/read-schema.ts"
 ```
 
-The internal symbols `TYPE`, `OPTIONAL`, `defineType`, `standardProps`, `toType`, `objectType`, `resolveNamed`, `listType`, and everything under `syntax/`, are **not** exported from the package. The `exports` map in `package.json` has only `"."`, so deep imports are impossible.
+The internal symbols `TYPE`, `OPTIONAL`, `defineType`, `standardProps`, `toType`, `objectType`, `resolveNamed`, `TAGGED`, `Tagged`, `listType`, `registeredNames`, and everything under `syntax/`, are **not** exported from the package. The `exports` map in `package.json` has only `"."`, so deep imports are impossible.
 
 ### 2.2 Exact signatures
 
 ```ts
 export const JSTN: {
-  parse<S extends Schema>(text: string, schema: S): Infer<S>
-  stringify<S extends Schema>(value: NoInfer<Infer<S> | ReadonlyInput<Infer<S>>>, schema: S, space?: number | string): string
+  parse: {
+    <S extends Schema>(text: string, schema: S): Infer<S>
+    (text: string, schema?: undefined): unknown
+  }
+  stringify: {
+    <S extends Schema>(value: NoInfer<Infer<S> | ReadonlyInput<Infer<S>>>, schema: S, space?: number | string): string
+    (value: unknown, schema?: undefined, space?: number | string): string
+  }
   validate<S extends Schema>(value: unknown, schema: S): Infer<S>
   is<S extends Schema>(value: unknown, schema: S): value is Infer<S>
   schema<S extends Schema>(schema: S): Type<Infer<S>>
   parseSchema(text: string, options?: ParseSchemaOptions): Type<unknown>
+  register(...types: Registrable[]): void
+  transformer: {
+    serialize(value: unknown): string | undefined
+    deserialize(data: unknown): unknown
+  }
 }
 
 export const number: Type<number>
@@ -73,6 +87,7 @@ export const string: Type<string>
 export const boolean: Type<boolean>
 export const bigint: Type<bigint>
 export const date: Type<Date>
+export const unknown: Type<unknown>
 
 export function array<S extends Schema>(item: S): Type<Infer<S>[]>
 export function tuple<const T extends readonly Schema[]>(...items: T): Type<{ -readonly [K in keyof T]: Infer<T[K]> }>
@@ -98,12 +113,21 @@ export class JSTNError extends Error {
 
 export type Registry = Readonly<Record<string, Schema | ((...args: any[]) => Type<any>)>>
 export interface ParseSchemaOptions { readonly types?: Registry }
+export type Registrable = Type<any> | ((...args: any[]) => Type<any>)
 ```
 
-The API beyond the fixed list consists of `JSTN.validate` and `JSTN.is`. Both are justified by Part 1 ("Schemas ... validators"), because a schema must be usable without serialising. Each is one line on top of `encode`:
+`parse` and `stringify` are overloaded. With a schema they are typed by it. With the schema omitted or `undefined` they use `unknown`, so `parse` returns `unknown` and `stringify` accepts any value. `JSTN.stringify(value, undefined, 2)` pretty-prints without a schema.
+
+The API beyond the fixed list consists of `JSTN.validate`, `JSTN.is`, `JSTN.register`, `JSTN.transformer` and `unknown`. `validate` and `is` are justified by Part 1 ("Schemas ... validators"), because a schema must be usable without serialising. Each is one line on top of `encode`:
 
 - `validate` throws a `JSTNError` that carries the path, or returns the value typed as `Infer<S>`.
 - `is` returns `true` exactly when `validate` would not throw. It narrows the value's type.
+
+`unknown`, `register` and `transformer` make up schema-less mode (§6.4):
+
+- `unknown` is a `Type<unknown>` named `unknown`. It is the default schema of `parse` and `stringify`, and it can also appear inside a schema, as in `{ id: number, meta: unknown }`.
+- `register(...types)` adds `createType` types, `createCollection` types and collection factories to the global registry that `unknown` and `parseSchema` consult.
+- `transformer` is a tRPC-compatible `DataTransformer`. It is structurally typed, so the library does not import tRPC.
 
 **`space`** behaves exactly like the third argument of `JSON.stringify`:
 
@@ -122,7 +146,7 @@ The API beyond the fixed list consists of `JSTN.validate` and `JSTN.is`. Both ar
 
 `Array`, `Set`, `Map`, `Object` and `Symbol` are compile errors, because they are not in `Schema`. At runtime they throw with a hint, for example `$: not a schema: Array (use array(...))`.
 
-**Registry.** `ParseSchemaOptions.types` maps names to the custom types and collection factories that schema text may use. Register each under the same name as the variable that holds it, which is the camelCase form of its tag, using object shorthand: `{ types: { money, sortedSet } }`. Then a `Type.name` that mentions them reads back with `parseSchema` and also compiles as TypeScript in the scope that defines them.
+**Registry.** `ParseSchemaOptions.types` maps names to the custom types and collection factories that schema text may use. Register each under the same name as the variable that holds it, which is the camelCase form of its tag, using object shorthand: `{ types: { money, sortedSet } }`. Then a `Type.name` that mentions them reads back with `parseSchema` and also compiles as TypeScript in the scope that defines them. A type passed to `JSTN.register` is available to `parseSchema` under the same camelCase name without `options.types` (§4.3).
 
 ### 2.3 Usage, matching the request
 
@@ -378,13 +402,18 @@ export function standardProps<T>(check: (value: unknown, path: Path) => unknown)
 ### Dispatch (`src/jstn.ts`)
 
 ```ts
-parse(text, s)          = toType(s).decode(readData(text), [])
-stringify(v, s, space)  = writeData(toType(s).encode(v, []), space)
+parse(text, s)          = toType(s === undefined ? unknown : s).decode(readData(text), [])
+stringify(v, s, space)  = writeData(toType(s === undefined ? unknown : s).encode(v, []), space)
 validate(v, s)          = (toType(s).encode(v, []), v)
 is(v, s)                = try validate → true; catch JSTNError → false; rethrow others
 schema(s)               = toType(s)
 parseSchema(text, opts) = readSchema(text, opts?.types ?? {})
+register                = register from types/unknown.ts
+transformer.serialize   = v === undefined ? undefined : writeData(unknown.encode(v, []))
+transformer.deserialize = d === undefined ? undefined : typeof d !== "string" ? throw : unknown.decode(readData(d), [])
 ```
+
+The default applies only when the schema is `undefined`. A top-level `null` schema is the null type, as everywhere else, so `JSTN.stringify(1, null)` fails with `$: expected null, got number 1`.
 
 ### Internal normaliser (`src/core/schema.ts`)
 
@@ -552,7 +581,7 @@ Name          = Ident ;
 
 | Name | Kind | Arguments |
 |---|---|---|
-| `number`, `string`, `boolean`, `bigint`, `null`, `date` | type | none |
+| `number`, `string`, `boolean`, `bigint`, `null`, `date`, `unknown` | type | none |
 | `Number`, `String`, `Boolean`, `BigInt`, `Date` | type: the constructor shorthands for the names above | none |
 | `array`, `set` | builder | 1 |
 | `map` | builder | 2 |
@@ -560,13 +589,17 @@ Name          = Ident ;
 | `union` | builder | 2 or more |
 | `optional` | builder | 1, and the result is valid only as a field value |
 
-After the built-ins come the entries in `options.types`:
+After the built-ins come the registered names. Each source passed to `JSTN.register` (§6.4) is available under `identifierFor` of its tag, resolved exactly like an `options.types` entry: a `Type` is a bare name, and a collection factory is a builder with arity `fn.length`. The pre-registered `date`, `set` and `map`, and any registered name that equals a built-in name (a tag `Array` gives `array`), are skipped, so the built-in always wins. Registered names are read when `parseSchema` is called, so a type registered later is visible to later calls.
+
+Then come the entries in `options.types`:
 
 - A function that is not a shorthand constructor is a collection factory, such as a user's generic wrapper around `createCollection`. It is a builder whose arity is `fn.length`, and it must be called with exactly that many arguments.
 - A factory with `fn.length === 0` fails with `"foo" is not a schema or collection` when the registry is read.
 - The reader calls the factory with the argument `Type`s. If the result is not a `Type` (`isType`), it fails with `"foo" did not return a type`, positioned at the name token.
 - Any other registry value is treated as a `Schema`, normalised with `toType`, and used as a bare name. This includes `Type`, shorthand constructors, `null` and object shapes. A collection with a fixed item schema is a `Type`, so it is registered this way.
 - A registry key cannot redefine any built-in name, type or builder, and must pass `assertTypeName` (§6.1).
+- A registry key may repeat a registered name only with the identical value (`===`, the same `Type` or factory that was registered). Any other value fails with `cannot redefine registered type "money"`. So `{ types: { money } }` keeps working after `JSTN.register(money)`.
+- The checks run in this order: built-in name, registered name, identifier and reserved name.
 
 Errors. Every error has path `$`. All of them carry line and column except the registry errors, which are raised before reading starts and have no position. Errors about a name are positioned at the name token.
 
@@ -581,6 +614,7 @@ Errors. Every error has path `$`. All of them carry line and column except the r
 | Factory result that is not a `Type` | `"foo" did not return a type` |
 | Duplicate field | `duplicate key "a"` |
 | `options.types` key that is a built-in name | `cannot redefine built-in type "date"` |
+| `options.types` key that is a registered name with a different value | `cannot redefine registered type "money"` |
 | `options.types` key that is not an identifier, or is reserved | `invalid type name "x y"` |
 | `options.types` function with no declared parameters | `"foo" is not a schema or collection` |
 
@@ -591,6 +625,7 @@ Errors. Every error has path `$`. All of them carry line and column except the r
 | Type | Name |
 |---|---|
 | scalars | `number`, `string`, `boolean`, `bigint`, `null`, `date` |
+| `unknown` | `unknown` |
 | custom type | `identifierFor(tag)`: the tag in camelCase, such as `money` for `Money` |
 | array | `array(T)` |
 | tuple | `tuple(A, B)`, empty `tuple()` |
@@ -600,7 +635,7 @@ Errors. Every error has path `$`. All of them carry line and column except the r
 
 No name ever needs parentheses for grouping, because every compound type is a call or an object.
 
-For any type `t` built from built-ins plus registered customs, with each custom registered under `identifierFor` of its tag, `parseSchema(t.name, { types }).name === t.name`. The exceptions are a `createType` or `createCollection` whose camelCase name is a built-in name, such as a `createType` tagged `Date` or a collection tagged `Set`, because the text name resolves to the built-in, and a collection with a fixed item schema registered as a bare name. `docs/schema-language.md` documents these exceptions.
+For any type `t` built from built-ins plus registered customs, with each custom registered under `identifierFor` of its tag, `parseSchema(t.name, { types }).name === t.name`. Customs passed to `JSTN.register` need no `types` entry. The exceptions are a `createType` or `createCollection` whose camelCase name is a built-in name, such as a `createType` tagged `Date` or a collection tagged `Set`, because the text name resolves to the built-in, and a collection with a fixed item schema registered as a bare name. `docs/schema-language.md` documents these exceptions.
 
 **The paste law.** With the builders and the same registered types in scope as JavaScript bindings, evaluating `t.name` as an expression gives a type whose `name` is `t.name`. In TypeScript, `JSTN.schema(<t.name pasted>)` compiles and has the same `Infer` type as `t`. The exceptions are the same as for the name law.
 
@@ -673,6 +708,7 @@ export function writeData(node: Node, space?: number | string): string
 | `set` | `v instanceof Set` | `list "Set"` | `list "Set"`. Duplicates (SameValueZero) fail with `invalid set(T): duplicate item` |
 | `map` | `v instanceof Map` | `list "Map"` whose items are 2-item `list null` | `list "Map"` whose items are pairs. Duplicate keys fail with `invalid map(K, V): duplicate key` |
 | union | first member whose `encode` succeeds | that member's node | first member whose `decode` succeeds |
+| `unknown` | a boolean, number, bigint, string or `null`, a value a registered `match` accepts, an array or a plain object (§6.4) | the matching scalar, the registered type's node, `list null` or `object` | any untagged node, or a tag that is registered (§6.4) |
 
 Boxed primitives (`new Number(1)`) are rejected. Element paths are `[i]`. Set items are indexed in iteration order. Map entries use `[i][0]` for the key and `[i][1]` for the value, because a map item is a `tuple(k, v)`.
 
@@ -741,7 +777,7 @@ export function guard<R>(run: () => R, prefix: string, path: Path, pos?: Pos): R
 - **Message.** The message is `${path}: ${reason}`, followed by ` (line ${line}, column ${column})` when a position is known.
 - **`path` and `segments`.** `path` is the formatted path, such as `$.someArr[2]`. `segments` is a frozen copy of the raw path, such as `["someArr", 2]`. Standard Schema issues use `segments` as their `path`.
 - **Imports.** `error.ts` imports `type.ts` for types only (`Node`, `Path`, `Pos`), so the runtime edge `type.ts → standard.ts → error.ts` is not a cycle.
-- **Positions.** Errors from stringify, validate and is never have a position. Errors from parse and parseSchema always have one, except the registry errors described in §4.3.
+- **Positions.** Errors from stringify, validate, is and `transformer.serialize` never have a position. Errors from parse, parseSchema and `transformer.deserialize` always have one, except the registry errors described in §4.3 and `expected JSTN text, got X`. `JSTN.register` errors have path `$` and no position.
 - **`formatPath`.** The root is `$`. A string key is written `.key` when it is an identifier and `[${quote(key)}]` otherwise. A number index is written `[i]`. Example: `$.a[2]["with space"]`.
 - **`describeValue` and `describeNode`** share one vocabulary:
 
@@ -792,8 +828,19 @@ $: "map" expects 2 arguments, got 1 (line 1, column 1)
 $: "number" is not a function (line 1, column 1)
 $: "array" must be called (line 1, column 1)
 $: cannot redefine built-in type "date"
+$: cannot redefine registered type "money"
 $: not a schema: Array (use array(...))
 $: optional() is only valid as an object field
+$.x: cannot stringify Widget (register a type for it with JSTN.register)
+$[0]: cannot stringify invalid Date (register a type for it with JSTN.register)
+$.f: cannot stringify function
+$[1]: cannot stringify undefined
+$.a: unknown tag "Widget" (register a type for it with JSTN.register) (line 1, column 6)
+$: tag "Money" is already registered
+$: cannot register number: only createType and createCollection types have a tag
+$: cannot register function: expected a custom type or collection factory
+$: cannot register function: it did not return a type
+$: expected JSTN text, got object
 ```
 
 ---
@@ -814,13 +861,16 @@ export type TypeSpec<T> = Named<T> & {
   stringify(value: NoInfer<T>): string
 }
 
+export type Tagged = { readonly tag: string; readonly match: (value: unknown) => boolean }
+export const TAGGED: WeakMap<Type<unknown>, Tagged>
+
 export function resolveNamed(spec: Named<unknown>): { readonly tag: string; readonly match: (value: unknown) => boolean }
 export function createType<T>(spec: TypeSpec<T>): Type<T>
 ```
 
 - **`name`** is either a string or a class. A string is the tag, and `match` is required. A class gives the tag `Class.name`, and `match` is optional. It defaults to `value instanceof Class`.
 - **`resolveNamed(spec)`** turns a `Named` into `{ tag, match }`. `createType` and `createCollection` both call it. It runs `assertTypeName(tag)`, returns an explicit `match` as given, throws `$: "X" needs a match function` for a string name with no `match`, and otherwise builds the `instanceof` check. The type rejects a string name without `match` at compile time. The runtime check covers casts.
-- **The tag** is the data tag, as in `Money(12.50 GBP)`. `assertTypeName(tag)` (in `core/error.ts`, next to the `JSTNError` it throws) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]` and whose `identifierFor(tag)` is not in `RESERVED` either, so `Number` and `NULL` are rejected. Shadowing `Date`, `Set` or `Map` is allowed, so a user can supply an alternative codec. A violation throws `$: invalid type name "x"`. An anonymous class has the name `""`, so it fails this check.
+- **The tag** is the data tag, as in `Money(12.50 GBP)`. `assertTypeName(tag)` (in `core/error.ts`, next to the `JSTNError` it throws) requires an `Ident` that is not in `RESERVED = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint", "unknown"]` and whose `identifierFor(tag)` is not in `RESERVED` either, so `Number`, `NULL` and `Unknown` are rejected. Shadowing `Date`, `Set` or `Map` is allowed in schemas, so a user can supply an alternative codec, but such a type cannot be passed to `JSTN.register`, because those tags are pre-registered (§6.4). A violation throws `$: invalid type name "x"`. An anonymous class has the name `""`, so it fails this check.
 - **The name.** `Type.name` is `identifierFor(tag)` (in `core/strings.ts`), the tag in camelCase. A leading run of capitals is lowercased, except that the last capital of a run of two or more stays when a lowercase letter follows it: `Money` gives `money`, `SortedSet` gives `sortedSet`, `URL` gives `url`, `JSONValue` gives `jsonValue`, and `note` stays `note`. The user names the variable that holds the type the same way, so schema text pastes into TypeScript. Every message below uses the name, not the tag.
 - **encode:**
   1. If `match(v)` is false, throw `expected ${name}, got ${describeValue(v)}`, for example `expected money, got object`.
@@ -832,6 +882,7 @@ export function createType<T>(spec: TypeSpec<T>): Type<T>
   2. Run `guard(() => spec.parse(payload), `invalid ${name} ${quote(payload)}`)`, for example `invalid money "abc": ...`.
   3. If `match(result)` is false, throw `invalid ${name} ${quote(payload)}: parse result rejected by match`.
 - **Inference.** `T` comes from the class, from `match` when it is a type guard, and from `parse`. `stringify` takes `NoInfer<T>`, so it never contributes. If the sources disagree, the call does not compile (§3).
+- **`TAGGED`.** `createType` records `{ tag, match }` for the type it returns in the module-level `TAGGED` `WeakMap`. `createCollection` does the same. Only types in `TAGGED` can be registered (§6.4), which is how `register` tells a tagged type from `number`, `array(...)` or an object type. Neither symbol is exported from the package.
 
 ### 6.2 createCollection (`src/types/collection.ts`)
 
@@ -854,7 +905,7 @@ export function createCollection<S extends Schema, C>(spec: CollectionSpec<S, In
   - An array gives one argument per entry. Each item is a tuple of those schemas, built with `tuple(...)`, and the name is `tag(A, B)`, such as `map(string, number)`.
 - **`C`** is the return type of `fromItems`. `toItems` takes `NoInfer<C>`, so write `fromItems` before `toItems`.
 - **Generic collections** are plain generic functions written by the user, `<S extends Schema>(item: S) => createCollection({...})`. The function's type parameter carries the item type, because TypeScript cannot apply a generic class such as `SortedSet` to a type argument by itself. Nothing inside the spec needs an annotation. A collection with a fixed item schema needs no wrapper and is a plain `Type<C>`.
-- **Runtime.** `createCollection` resolves the tag and `match`, normalises each schema with `toType`, builds the item type (the single type, or `tuple(...args)`), computes `name = `${identifierFor(tag)}(${args.map((a) => a.name).join(", ")})``, and returns `listType(tag, name, item, { match, toItems, fromItems })`. The `toItems` and `fromItems` passed on are arrows that call `spec.toItems(value)` and `spec.fromItems(items)`, so `this` stays bound.
+- **Runtime.** `createCollection` resolves the tag and `match`, normalises each schema with `toType`, builds the item type (the single type, or `tuple(...args)`), computes `name = `${identifierFor(tag)}(${args.map((a) => a.name).join(", ")})``, builds `listType(tag, name, item, { match, toItems, fromItems })`, records `{ tag, match }` for it in `TAGGED`, and returns it. The `toItems` and `fromItems` passed on are arrows that call `spec.toItems(value)` and `spec.fromItems(items)`, so `this` stays bound.
 
 **`listType`** is internal and is the shared core for every list-shaped type:
 
@@ -888,6 +939,67 @@ function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: L
 
 Untagged `[...]` is reserved for arrays and tuples, because `createCollection` always tags. That keeps union resolution predictable.
 
+`unknown` is in `unknown.ts`, built with `defineType` directly. `date`, `set` and `map` are pre-registered there with `register(date, set, map)` at module load, so `unknown` reaches them through the same mechanism as user types (§6.4).
+
+### 6.4 Schema-less mode (`src/types/unknown.ts`)
+
+```ts
+export type Registrable = Type<any> | ((...args: any[]) => Type<any>)
+
+export const unknown: Type<unknown>
+export function register(...types: Registrable[]): void
+export function registeredNames(): ReadonlyMap<string, Registrable>
+```
+
+The file holds one module-level registry: an ordered list of `{ tag, match, type }` entries, newest first; a `Map` from tag to `Type`; a `Map` from camelCase name to the registered source; and the `Set` of sources already registered. The last line of the file is `register(date, set, map)`. Global state is a deliberate choice, requested by the user. `registeredNames` is internal and is read by `read-schema.ts` (§4.3).
+
+```ts
+JSTN.register(money, sortedSet)
+const text = JSTN.stringify({ at: new Date(0), price: new Money("1.00", "GBP"), ranks: new SortedSet([2, 1]) })
+const back = JSTN.parse(text)
+```
+
+`text` is `{at:Date(1970-01-01T00:00:00Z),price:Money(1.00 GBP),ranks:SortedSet[1,2]}`, and `back` is deep-equal to the value.
+
+**`unknown.encode(v, path)`** runs `checkDepth(path.length, path)`, then picks the first rule that applies:
+
+1. A boolean, number, bigint or string gives the matching scalar Node. `null` gives the `null` Node.
+2. The first registry entry whose `match(v)` is true, trying the most recently registered first, encodes `v` with that entry's `Type`. User types are therefore tried before the built-in `Date`, `Set` and `Map`, so a registered `Set` subclass wins over `Set`. Errors from that `Type` propagate unchanged.
+3. An array gives an untagged `list`, each item encoded with `unknown` at `[...path, i]`. A hole is `undefined` and fails at its index.
+4. A plain object (prototype `Object.prototype` or `null`) gives an `object` Node of its own enumerable string keys in `Object.keys` order, each value encoded with `unknown` at `[...path, key]`. Keys whose value is `undefined` are omitted. Symbol keys are ignored.
+5. Anything else fails with `cannot stringify ${describeValue(v)}`, followed by ` (register a type for it with JSTN.register)` when `typeof v === "object"`. So a class instance gives `cannot stringify Widget (register ...)`, an invalid `Date` (rejected by `date`'s `match`) gives `cannot stringify invalid Date (register ...)`, and `undefined`, a function or a symbol gives `cannot stringify undefined`, `function` or `symbol` with no hint.
+
+**`unknown.decode(node, path)`:**
+
+- A scalar Node gives its value, and `null` gives `null`.
+- An untagged `list` gives an array, each item decoded with `unknown`.
+- An `object` gives a plain object built with `Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })` on `{}`, in entry order, so `"__proto__"` is an ordinary own key.
+- A tagged `list` or a `tagged` Node is decoded by the `Type` registered for its tag. An unregistered tag fails with `unknown tag "X" (register a type for it with JSTN.register)` at the node's path and position.
+
+**Round trip.** The core law (§3) holds for `unknown` except where encoding forgets information: keys whose value is `undefined` are dropped, a null-prototype object decodes with `Object.prototype`, and a value accepted by a registered `match` decodes as whatever that type's `parse` or `fromItems` builds. An unregistered `Set` subclass, for example, comes back as a `Set`.
+
+**`register(...sources)`** adds each source in order. A failure throws at that source, and the sources before it stay registered. For each source:
+
+1. A source that is already registered (the same reference) is skipped, so registering twice is a no-op.
+2. A `Type` is used as is. A function with `length >= 1` is a collection factory: it is called once with `unknown` for each declared parameter, and the result must be a `Type`. So `register(sortedSet)` registers `sortedSet(unknown)`, and the pre-registered built-ins are `date`, `set(unknown)` and `map(unknown, unknown)`.
+3. The `Type` must be in `TAGGED` (§6.1), which means it came from `createType` or `createCollection`.
+4. Its tag must not be registered yet.
+5. The entry goes to the front of the match order. Its tag maps to the `Type`, and `identifierFor(tag)` maps to the source, so schema text can name `sortedSet(number)` as a builder and `money` as a type.
+
+| Source | Reason |
+|---|---|
+| a type whose tag is registered, including `Date`, `Set` and `Map`, and `set(Number)` | `tag "Money" is already registered` |
+| a `Type` not built by `createType` or `createCollection` | `cannot register number: only createType and createCollection types have a tag` |
+| a function with no declared parameters, or any value that is neither a `Type` nor a function | `cannot register function: expected a custom type or collection factory`, with `describeValue` of the source (`object` for a plain object) |
+| a factory whose result is not a `Type` | `cannot register function: it did not return a type` |
+
+**`JSTN.transformer`** is `{ serialize, deserialize }`, the shape of tRPC's `DataTransformer`, so it can be passed to `initTRPC.create({ transformer })` and to `httpLink` or `httpBatchLink`:
+
+- `serialize(value)` returns `undefined` for `undefined`. Otherwise it returns compact JSTN text from `unknown.encode`, so it throws the same errors as `JSTN.stringify(value)`.
+- `deserialize(data)` returns `undefined` for `undefined`. A string is read with `readData` and decoded with `unknown`. Any other value fails with `expected JSTN text, got ${describeValue(data)}`, at path `$` with no position.
+
+tRPC embeds the returned string in its JSON envelope, so values cross the wire as JSTN text inside a JSON string. Procedure inputs can still be validated with a JSTN schema, because every `Type` is a Standard Schema.
+
 ---
 
 ## 7. File layout
@@ -899,14 +1011,15 @@ core/strings  ←  core/error  ←  core/standard  ←  core/type
 core/*  ←  types/scalars, types/custom, types/object
         ←  core/schema (toType, needs scalars, date, object)
         ←  types/date (custom), types/tuple, types/union, types/collection (all use toType; collection also uses custom, tuple and union)
+types/custom, types/date, types/object, types/collection  ←  types/unknown
 core/*  ←  syntax/lexer  ←  syntax/read-data, syntax/write-data
-syntax/lexer + types/* + core/schema  ←  syntax/read-schema
+syntax/lexer + types/* + core/schema  ←  syntax/read-schema (also reads registeredNames from types/unknown)
 everything  ←  jstn  ←  index
 ```
 
 Inside `core`, the runtime imports are `type.ts → standard.ts → error.ts → strings.ts`. `error.ts` and `standard.ts` import `type.ts` with `import type` only, which is erased, so there is no runtime cycle.
 
-`core/schema.ts` imports `types/scalars.ts`, `types/date.ts` and `types/object.ts`. Those files must never import `core/schema.ts`. `date.ts` imports only `custom.ts`, and `custom.ts` imports only `core/*`. There are no cycles.
+`core/schema.ts` imports `types/scalars.ts`, `types/date.ts` and `types/object.ts`. Those files must never import `core/schema.ts`. `date.ts` imports only `custom.ts`, and `custom.ts` imports only `core/*`. `types/unknown.ts` imports `core/error`, `core/strings`, `core/type`, `types/custom`, `types/date`, `types/object` and `types/collection`, and no file under `types/` or `core/` imports it. Only `syntax/read-schema.ts` and `jstn.ts` do. There are no cycles. Loading `unknown.ts` runs `register(date, set, map)`, so the built-ins are registered before any caller can reach `unknown`.
 
 ```
 package.json                 name jstn, type module, exports ".", scripts, devDeps
@@ -919,7 +1032,7 @@ docs/                        data-format.md, schema-language.md, validation.md, 
 
 src/
   index.ts                   public surface: re-exports exactly the names in §2.1
-  jstn.ts                    the JSTN object: parse, stringify, validate, is, schema, parseSchema
+  jstn.ts                    the JSTN object: parse and stringify (overloads, default unknown), validate, is, schema, parseSchema, register, transformer
   core/
     strings.ts               IDENT, RAW_FORBIDDEN, isIdent, quote, formatKey, isRawPayload, RESERVED, identifierFor
     type.ts                  brands, Type, Optional, Schema, Shape, Infer, InferShape, ReadonlyInput, Node, Entry, Pos, Path, defineType, isType, isOptional
@@ -928,17 +1041,18 @@ src/
     schema.ts                toType (Schema → Type), optional, isShorthand
   types/
     scalars.ts               number, string, boolean, bigint, nullType
-    custom.ts                createType, resolveNamed, Class, Match, Named, TypeSpec; name = identifierFor(tag)
+    custom.ts                createType, resolveNamed, Class, Match, Named, TypeSpec, Tagged, TAGGED; name = identifierFor(tag)
     date.ts                  date: strict ISO-8601 parseIsoDate and formatIsoDate, via createType
     object.ts                objectType: strict keys, optional fields, safe construction, object name with optional(...) fields
     tuple.ts                 tuple, named tuple(A, B)
     union.ts                 union, flattening, best-error selection, named union(A, B)
-    collection.ts            listType, createCollection, CollectionSpec, array, set, map; names array(T) and identifierFor(tag)(A, B)
+    collection.ts            listType, createCollection (records TAGGED), CollectionSpec, array, set, map; names array(T) and identifierFor(tag)(A, B)
+    unknown.ts               unknown, register, registeredNames, Registrable; the global registry, pre-registers date, set and map
   syntax/
     lexer.ts                 shared tokenizer: trivia, tokens, punct { } [ ] ( ) , :, positions, grammar helpers, readPayload, describeToken
     read-data.ts             readData(text): Node; path stack, duplicate keys, tag adjacency, depth limit
     write-data.ts            writeData(node, space): string; compact/pretty rules, scalar spelling
-    read-schema.ts           readSchema(text, registry): Type; built-in types and builders, registry resolution, Registry and ParseSchemaOptions types
+    read-schema.ts           readSchema(text, registry): Type; built-in types (including unknown) and builders, registered names, registry resolution, Registry and ParseSchemaOptions types
 
 test/
   support/
@@ -957,11 +1071,13 @@ test/
     tuple.test.ts            arity and positions
     union.test.ts            ordering, flattening, error selection, names
     collection.test.ts       array, set, map, createCollection
+    unknown.test.ts          unknown without registration, JSTN.register, JSTN.transformer
   syntax/
     lexer.test.ts            every token class and lexical error
     read-data.test.ts        data grammar → Node, positions, syntax errors with paths
     write-data.test.ts       golden output for every node kind and space value
-    read-schema.test.ts      schema grammar, built-in types and builders, arities, registry, errors
+    read-schema.test.ts      schema grammar, built-in types and builders, arities, registry
+    read-schema-errors.test.ts  exact schema-text error messages and positions: names, arity, optional placement, syntax, registry checks, depth
     syntax.property.test.ts  readData(writeData(n)) equals n; JSON superset; total reader
   api.test.ts                end-to-end through JSTN.* with the user's examples
   errors.test.ts             exact-message catalogue (message, reason, path, line, column)
@@ -970,6 +1086,7 @@ test/
   compile-errors.test.ts     runs tsc on snippets that must not compile, such as JSTN.stringify("x", {})
   paste.test.ts              runs tsc on each schema's pasted name and checks the Infer type is unchanged
   docs.test.ts               README and docs/ code blocks parse, round-trip and type-check
+  trpc.test.ts               real tRPC v11 round trip with JSTN.transformer and a JSTN schema as procedure input
 ```
 
 ### Tooling
@@ -978,9 +1095,10 @@ test/
 
 - `"name": "jstn"`, `"version": "0.1.0"`, `"type": "module"`.
 - `"exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } }`, `"files": ["dist"]`, `"engines": { "node": ">=26" }`.
-- devDependencies: `typescript@^7.0.2`, `vitest@^5.0.5`, `fast-check@^4.10.2`. There are no dependencies.
+- devDependencies: `typescript@^7.0.2`, `vitest@^5.0.5`, `fast-check@^4.10.2`, `@trpc/server@^11.22.1` and `@trpc/client@^11.22.1`. The tRPC packages are used only by `test/trpc.test.ts`. There are no dependencies.
 - Scripts:
   - `"build": "tsc -p tsconfig.build.json"`
+  - `"prepare": "npm run build"`, so installing from GitHub builds `dist/`
   - `"check": "tsc --noEmit"`
   - `"test": "tsc --noEmit && vitest run"`
 
@@ -1014,6 +1132,7 @@ General rules:
 - Equality uses `toStrictEqual`. It compares numbers with `Object.is`, so `-0` and `NaN` are handled, and it checks class identity and `undefined` properties.
 - `it.each` tables are preferred.
 - Error tests assert `instanceof JSTNError` and the exact `message`.
+- The registry is global. A test file that needs registered types calls `JSTN.register` once at the top level, and registers only the shared fixtures or types defined in that file. Vitest gives each test file its own module graph, so registrations do not leak between files.
 
 ### test/support/fixtures.ts (foundation)
 
@@ -1038,7 +1157,7 @@ General rules:
    - true for `2026-01-01T14:00:00Z`, `12.50 GBP` and `https://x.io//a`
    - false for `""`, a leading or trailing space, each forbidden character, a newline and a tab
 4. `identifierFor`: `Money` gives `money`, `SortedSet` gives `sortedSet`, `URL` gives `url`, `JSONValue` gives `jsonValue`, `Date` gives `date`, and names that already start lowercase (`note`, `_X`, `$y`) are unchanged.
-5. `assertTypeName`: accepts `Money`, `Date` and `Set`. It rejects `""`, `"a b"`, `"1x"`, every `RESERVED` name, and tags whose `identifierFor` is reserved, such as `Number`, `String`, `Boolean` and `NULL`, with an exact message.
+5. `assertTypeName`: accepts `Money`, `Date` and `Set`. It rejects `""`, `"a b"`, `"1x"`, every `RESERVED` name, and tags whose `identifierFor` is reserved, such as `Number`, `String`, `Boolean`, `NULL` and `Unknown`, with an exact message. `RESERVED` is pinned as a whole list, including `unknown`.
 
 ### test/core/error.test.ts (foundation)
 
@@ -1253,6 +1372,37 @@ General rules:
    - an `items` array gives tuple items and the name `pairs(string, number)`, and a short item gives `expected 2 items, got 1`
    - a fixed collection with object items has the name `bag({ a: number })` and needs no wrapper
 
+### test/types/unknown.test.ts
+
+The file registers `money`, `note`, `sortedSet` and a fixed collection `tally` over a `Set<number>` subclass `Tally`, all at the top level.
+
+1. **Without registration** (built-ins only), one `it.each` table round-trips through `JSTN.stringify(value)` and `JSTN.parse(text)` with exact compact text: `null`, a boolean, `-0`, `NaN`, `-5n`, a string with an escape, a nested array, an object with a quoted key, a `Date`, a `Set` of mixed items, and a `Map` whose value is an object holding an empty `Set`.
+2. `unknown.name` is `unknown`, and `parseSchema("{ meta: unknown, list: array(unknown) }")` reads back with the same name.
+3. `unknown` works inside an explicit schema (`{ id: number, meta: unknown }`).
+4. `undefined` object values are omitted. `undefined` as an array item or at the root fails with `cannot stringify undefined` at its path.
+5. Rejections with exact messages: a class instance and an invalid `Date` get the register hint. A function and a symbol do not.
+6. An unregistered tag fails with the register hint and the position, for both a tagged scalar and a tagged list.
+7. `{ __proto__: { polluted: true } }` parses to an object with `Object.prototype` and the own key `__proto__`, and nothing is polluted.
+8. A 600-level array fails `stringify` with `nesting deeper than 512 levels`.
+9. `JSTN.stringify({ a: [1] }, undefined, 2)` pretty-prints.
+10. **`JSTN.register`:**
+    - an object holding a `Money`, a `Note` with a payload that needs quoting, a `SortedSet` and a `Tally` round-trips with exact text
+    - the newest registration wins: a `Tally` writes `Tally[1]` while a plain `Set` still writes `Set[1]`
+    - registered names work in `parseSchema` with no options, `{ types: { money } }` with the registered value is accepted, and a different `Type` under `money` fails with `cannot redefine registered type "money"`
+    - registering the same sources again does not throw
+    - one `it.each` table rejects, with exact messages: a second type tagged `Money`, a type tagged `Date`, `number`, `set(Number)`, a zero-parameter function, a factory that returns a non-type, and a plain object
+11. **`JSTN.transformer`:** `serialize` gives exact compact text for a value with a `Date`, a `Set` of bigints and a `Money`, and `deserialize` gives the value back. Both pass `undefined` through. `deserialize` of a non-string fails with `$: expected JSTN text, got object`.
+
+### test/trpc.test.ts
+
+A real tRPC v11 round trip with no network. The server is `initTRPC.create({ transformer: JSTN.transformer })`. The clients use `httpBatchLink` and `httpLink` with `transformer: JSTN.transformer` and a `fetch` that calls `fetchRequestHandler` from `@trpc/server/adapters/fetch` directly. `money` and `sortedSet` are registered at the top level.
+
+1. A query returns a `Date`, a bigint beyond 2^53, a `Set`, a `Map` holding an object, a `Money`, a `SortedSet`, `null` and an `undefined` field. The client receives them with their classes, and the `undefined` field is absent.
+2. A mutation echoes rich input (`Date`, `Set` of bigints, an array holding a `Map` of `Money`) through both the batched and the single link.
+3. A procedure whose input is a `JSTN.schema` validates through Standard Schema: a valid order returns the expected result, and a wrong item type rejects with a message matching `expected string, got number 1`.
+4. `undefined` results and inputs pass through both links.
+5. A thrown server error reaches the client as a `TRPCClientError` with its message.
+
 ### test/core/standard.test.ts (unit A)
 
 1. `JSTN.schema(...)["~standard"]` has `version: 1` and `vendor: "jstn"`, and it is frozen.
@@ -1296,6 +1446,7 @@ This file is checked by `tsc --noEmit`. It contains no comments and no `@ts-expe
     - `expectTypeOf<Expected>().toExtend<Parameters<typeof JSTN.stringify<typeof S>>[0]>()`
     - `Type<number>` is assignable to `Type<number | string>`, which shows covariance
 12. Standard Schema: the test writes its own copy of the official `StandardSchemaV1` interface and an `InferOutput` helper. `S`, a `JSTN.schema` with an optional `set`, `sortedSet(Date)` and `number` are all accepted, and their output types equal the expected types.
+13. Schema-less mode: `unknown` is `Type<unknown>`, and a shape holding it infers `unknown` for that field. `JSTN.parse(text)` and `JSTN.parse(text, undefined)` return `unknown`. `JSTN.stringify` accepts any value without a schema, including with `undefined` and a `space`. `transformer.deserialize` returns `unknown`.
 
 ### test/compile-errors.test.ts
 
@@ -1404,7 +1555,7 @@ Golden strings are written inline with `toBe`.
    - a function with no declared parameters is rejected before reading
    - a factory that does not return a `Type` fails at its name token
    - a key that is any built-in name, whether a type or a builder (`date`, `Date`, `array`, `optional`), is rejected, and so is a key that fails `assertTypeName`
-6. Every error in the §4.3 table, with exact messages and positions.
+6. Every error in the §4.3 table, with exact messages and positions. These live in `read-schema-errors.test.ts`, except `cannot redefine registered type`, which is in `test/types/unknown.test.ts` because it needs a registration.
 7. The text schema and the builder schema behave identically. They have equal `.name`, and `stringify` gives the same output on `sampleValue`.
 8. Number, string and bigint tokens in schema position are rejected. Depth 512 is accepted, and 513 is rejected, counting both `{` and `(`.
 
@@ -1471,15 +1622,15 @@ This test checks the paste property from §1 with the real compiler. Like `compi
 1. A one-paragraph pitch and a data sample.
 2. Getting started: install from GitHub, requirements, a quick start, and an example error.
 3. A cheat sheet with two columns, Schema and Data, for every type. There is one Schema column because TypeScript and schema text are identical.
-4. Practical examples: a config file, HTTP with dates and bigints, localStorage, untrusted input, custom types, custom collections, storing and sharing schemas as text (a `name` read back with `parseSchema` or pasted into TypeScript), and Standard Schema. Registries use object shorthand: `{ types: { money, sortedSet } }`.
-5. API reference: one short entry per export.
+4. Practical examples: a config file, HTTP with dates and bigints, localStorage, untrusted input, custom types, custom collections, storing and sharing schemas as text (a `name` read back with `parseSchema` or pasted into TypeScript), Standard Schema, and schema-less data with tRPC (`JSTN.register(...)`, then `transformer: JSTN.transformer` on the server and the links). Registries use object shorthand: `{ types: { money, sortedSet } }`.
+5. API reference: one short entry per export, including `unknown`, `JSTN.register`, `JSTN.transformer` and the schema-less forms `JSTN.parse(text)` and `JSTN.stringify(value, undefined, space)`.
 6. Links to the docs and the licence.
 
 `docs/` holds the technical detail:
 
 - `data-format.md`: syntax, payload quoting, output rules and limits.
 - `schema-language.md`: schema text as the TypeScript builder syntax, the built-in names and builders with their arities, the rules, the registry, camelCase names, the name law and its exceptions, and static types.
-- `validation.md`: schemas, strict objects, unions, `is` narrowing, `createType` and `createCollection` inference, tag and name rules (`identifierFor`, reserved names), errors and paths, and Standard Schema.
+- `validation.md`: schemas, strict objects, unions, `is` narrowing, `createType` and `createCollection` inference, tag and name rules (`identifierFor`, reserved names), errors and paths, Standard Schema, and a schema-less section: what `unknown` encodes and decodes, the global registry and its rules, registered names in schema text, and the error messages with the register hint.
 - `grammar.md`: the reference grammars in EBNF (§4.1–4.3) and the details that apply on top.
 
 ---
@@ -1524,6 +1675,10 @@ Tests that must pass: `test/syntax/read-data.test.ts`, `test/syntax/write-data.t
 It owns `src/syntax/read-schema.ts`, `README.md`, `test/support/arbitraries.ts`, `test/syntax/read-schema.test.ts`, `test/api.test.ts`, `test/errors.test.ts`, `test/laws.property.test.ts`, `test/paste.test.ts` and `test/docs.test.ts`, plus `docs/`.
 
 Its tests must pass after A and B are merged. C is also responsible for the final `npm test` passing with everything merged.
+
+### Schema-less addition
+
+Schema-less mode was added after the v1 units as one change: `src/types/unknown.ts`; the overloads, `register` and `transformer` in `src/jstn.ts`; `TAGGED` in `custom.ts` and `collection.ts`; `unknown` and registered names in `read-schema.ts`; `unknown` in `RESERVED`; the two new exports in `index.ts`; the tRPC devDependencies; and `test/types/unknown.test.ts` and `test/trpc.test.ts`.
 
 ### Definition of done
 

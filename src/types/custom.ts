@@ -13,6 +13,10 @@ export type TypeSpec<T> = Named<T> & {
   stringify(value: NoInfer<T>): string
 }
 
+export type Tagged = { readonly tag: string; readonly match: (value: unknown) => boolean }
+
+export const TAGGED = new WeakMap<Type<unknown>, Tagged>()
+
 export function resolveNamed(spec: Named<unknown>): { readonly tag: string; readonly match: (value: unknown) => boolean } {
   const { name, match } = spec
   const tag = typeof name === "function" ? name.name : name
@@ -25,7 +29,7 @@ export function resolveNamed(spec: Named<unknown>): { readonly tag: string; read
 export function createType<T>(spec: TypeSpec<T>): Type<T> {
   const { tag, match } = resolveNamed(spec)
   const name = identifierFor(tag)
-  return defineType(
+  const type = defineType(
     name,
     (value, path) => {
       if (!match(value)) throw mismatch(name, describeValue(value), path)
@@ -41,4 +45,6 @@ export function createType<T>(spec: TypeSpec<T>): Type<T> {
       return result
     },
   )
+  TAGGED.set(type, { tag, match })
+  return type
 }

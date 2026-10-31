@@ -67,7 +67,7 @@ const dir = fs.mkdtempSync(`${os.tmpdir()}/jstn-docs-`)
 fs.writeFileSync(`${dir}/package.json`, "{ \"type\": \"module\" }")
 fs.writeFileSync(`${dir}/tsconfig.json`, JSON.stringify({
   extends: `${root}/tsconfig.json`,
-  compilerOptions: { rewriteRelativeImportExtensions: false, lib: ["es2024", "dom"], paths: { jstn: [`${root}/src/index.ts`] } },
+  compilerOptions: { rewriteRelativeImportExtensions: false, lib: ["es2024", "dom"], paths: { jstn: [`${root}/src/index.ts`], "@trpc/server": [`${root}/node_modules/@trpc/server/dist/index.d.mts`], "@trpc/client": [`${root}/node_modules/@trpc/client/dist/index.d.mts`] } },
   include: ["*.ts"],
 }))
 code.forEach((block, i) => fs.writeFileSync(`${dir}/block${i}.ts`, block.body))

@@ -98,6 +98,6 @@ describe("assertTypeName", () => {
   })
 
   it("reserves exactly the documented names", () => {
-    expect(RESERVED).toStrictEqual(["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"])
+    expect(RESERVED).toStrictEqual(["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint", "unknown"])
   })
 })

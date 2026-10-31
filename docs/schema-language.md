@@ -30,7 +30,7 @@ Every `Type.name` is written in this syntax, so you can paste a serialised schem
 
 | Name | Arguments |
 |---|---|
-| `number`, `string`, `boolean`, `bigint`, `date`, `null` | none |
+| `number`, `string`, `boolean`, `bigint`, `date`, `null`, `unknown` | none |
 | `Number`, `String`, `Boolean`, `BigInt`, `Date` | none: the shorthands for the names above |
 | `array`, `set` | 1 |
 | `map` | 2 |
@@ -95,6 +95,8 @@ fromText.name === fromCode.name
 - A registry key must be an identifier that is not `true`, `false`, `NaN` or `Infinity`, and it cannot redefine a built-in name.
 - A function with no declared parameters fails with `"foo" is not a schema or collection`. A factory that does not return a `Type` fails where it is used.
 - Registry errors are raised before reading starts and have no position.
+
+Types registered with `JSTN.register` are available by name without `types`. `types` may repeat a registered name only with the same value.
 
 ## Names
 

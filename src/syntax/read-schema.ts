@@ -7,6 +7,7 @@ import { date } from "../types/date.ts"
 import { bigint, boolean, nullType, number, string } from "../types/scalars.ts"
 import { tuple } from "../types/tuple.ts"
 import { union } from "../types/union.ts"
+import { registeredNames, unknown } from "../types/unknown.ts"
 import { Lexer, type Token } from "./lexer.ts"
 
 export type Registry = Readonly<Record<string, Schema | ((...args: any[]) => Type<any>)>>
@@ -21,7 +22,7 @@ type Named =
   | { readonly kind: "type"; readonly type: Type<unknown> }
   | { readonly kind: "builder"; readonly min: number; readonly max: number; readonly build: (args: Value[]) => unknown }
 
-const BUILTIN_TYPES: Registry = { number, string, boolean, bigint, null: nullType, date, Number, String, Boolean, BigInt, Date }
+const BUILTIN_TYPES: Registry = { number, string, boolean, bigint, unknown, null: nullType, date, Number, String, Boolean, BigInt, Date }
 
 const BUILTIN_BUILDERS: ReadonlyMap<string, Named> = new Map<string, Named>([
   ["array", { kind: "builder", min: 1, max: 1, build: ([item]) => array(item as Type<unknown>) }],
@@ -41,8 +42,12 @@ function resolve(name: string, value: Registry[string]): Named {
 function resolveNames(registry: Registry): Map<string, Named> {
   const names = new Map<string, Named>(BUILTIN_BUILDERS)
   for (const [name, value] of Object.entries(BUILTIN_TYPES)) names.set(name, resolve(name, value))
+  const builtins = new Set(names.keys())
+  const registered = registeredNames()
+  for (const [name, value] of registered) if (!builtins.has(name)) names.set(name, resolve(name, value))
   for (const [name, value] of Object.entries(registry)) {
-    if (names.has(name)) throw new JSTNError(`cannot redefine built-in type ${quote(name)}`, [])
+    if (builtins.has(name)) throw new JSTNError(`cannot redefine built-in type ${quote(name)}`, [])
+    if (registered.has(name) && registered.get(name) !== value) throw new JSTNError(`cannot redefine registered type ${quote(name)}`, [])
     if (!isIdent(name) || RESERVED.includes(name)) throw new JSTNError(`invalid type name ${quote(name)}`, [])
     names.set(name, resolve(name, value))
   }

@@ -82,6 +82,7 @@ A schema is written the same way in TypeScript and as text.
 | `map(string, number)` | `Map[["a", 1]]` |
 | `money`, from `createType` | `Money(12.50 GBP)` |
 | `sortedSet(number)`, from `createCollection` | `SortedSet[1, 2]` |
+| `unknown` | any of the above, read without a schema |
 
 `Number`, `String`, `Boolean`, `BigInt` and `Date` work as shorthands for the scalars. Data may contain `//` and `/* */` comments and trailing commas. Keys need quotes only when they are not identifiers.
 
@@ -307,15 +308,67 @@ function check<T>(schema: StandardSchemaV1<T>, input: unknown): T {
 check(Todo, { title: "Ship it", tags: ["work"] })
 ```
 
+### Send values without a schema
+
+Register your custom types once, then `stringify` and `parse` work without a schema. Dates, bigints, sets and maps work with no registration.
+
+```ts
+import { JSTN, createType } from "jstn"
+
+const url = createType({ name: URL, parse: (text) => new URL(text), stringify: (u) => u.href })
+JSTN.register(url)
+
+const text = JSTN.stringify({ saved: new Date(0), links: new Set([new URL("https://example.com")]) })
+const value = JSTN.parse(text)
+```
+
+`text` is `{saved:Date(1970-01-01T00:00:00Z),links:Set[URL(https://example.com/)]}`. Without a schema, `parse` returns `unknown`.
+
+### Use as a tRPC transformer
+
+`JSTN.transformer` sends every registered type over the wire, like superjson:
+
+```ts
+import { createTRPCClient, httpBatchLink } from "@trpc/client"
+import { initTRPC } from "@trpc/server"
+import { JSTN, createType } from "jstn"
+
+class Money {
+  readonly amount: string
+  constructor(amount: string) {
+    this.amount = amount
+  }
+}
+
+JSTN.register(createType({ name: Money, parse: (text) => new Money(text), stringify: (m) => m.amount }))
+
+const t = initTRPC.create({ transformer: JSTN.transformer })
+
+const appRouter = t.router({
+  invoice: t.procedure
+    .input(JSTN.schema({ id: BigInt }))
+    .query(({ input }) => ({ id: input.id, issued: new Date(), total: new Money("12.50") })),
+})
+
+const client = createTRPCClient<typeof appRouter>({
+  links: [httpBatchLink({ url: "/trpc", transformer: JSTN.transformer })],
+})
+
+const invoice = await client.invoice.query({ id: 42n })
+invoice.total.amount
+```
+
+Register the same types on the server and the client. Any JSTN schema also works as a tRPC input validator, because it implements Standard Schema.
+
 ## API
 
-### `JSTN.stringify(value, schema, space?)`
+### `JSTN.stringify(value, schema?, space?)`
 
-Validates `value` and returns JSTN text. `space` works like the third argument of `JSON.stringify`. Throws `JSTNError`.
+Validates `value` and returns JSTN text. `space` works like the third argument of `JSON.stringify`. Without a schema, any supported value is accepted: pass `undefined` as the schema to set `space`. Throws `JSTNError`.
 
-### `JSTN.parse(text, schema)`
+### `JSTN.parse(text, schema?)`
 
-Reads JSTN text, validates it, and returns a value typed by the schema. Throws `JSTNError` with a line and column.
+Reads JSTN text, validates it, and returns a value typed by the schema. Without a schema, it returns `unknown`, and tags are read with the registered types. Throws `JSTNError` with a line and column.
 
 ### `JSTN.validate(value, schema)`
 
@@ -333,6 +386,14 @@ Turns any schema, including shorthands and object literals, into a `Type`. Use i
 
 Reads [schema text](docs/schema-language.md), which is the same syntax as a TypeScript schema, and returns a `Type<unknown>`. `types` registers custom types and collection factories by name, as in `{ types: { money, sortedSet } }`.
 
+### `JSTN.register(...types)`
+
+Registers `createType` results and `createCollection` factories for use without a schema, by `JSTN.transformer`, and by name in schema text. A type registered later is tried first. See [docs/validation.md](docs/validation.md#values-without-a-schema).
+
+### `JSTN.transformer`
+
+A tRPC data transformer, `{ serialize, deserialize }`, that turns any supported value into JSTN text and back.
+
 ### Builders
 
 | Builder | Makes |
@@ -346,6 +407,7 @@ Reads [schema text](docs/schema-language.md), which is the same syntax as a Type
 | `optional(schema)` | an object field that may be absent |
 | `{ ... }` | an object with exactly these keys |
 | `null` | `null` |
+| `unknown` | any supported value, using the registered types |
 
 ### `createType({ name, match?, parse, stringify })`
 

@@ -87,6 +87,32 @@ $: unknown type "user" (line 3, column 10)
 
 Paths start at `$`. Identifier keys are written `.key`, other keys `["key"]`, and indexes `[i]`. Map entries use `[i][0]` for the key and `[i][1]` for the value. Lines and columns start at 1, and columns count UTF-16 code units. A byte order mark at the start is skipped and takes no column.
 
+## Values without a schema
+
+`unknown` accepts any supported value and works out its type at runtime. `JSTN.stringify(value)`, `JSTN.parse(text)` and `JSTN.transformer` use it, and you can use it in a schema, as in `{ id: number, meta: unknown }`.
+
+When writing, a value is matched in this order:
+
+1. `null`, booleans, numbers, bigints and strings
+2. registered types, by their `match` function, most recently registered first
+3. `Date`, `Set` and `Map`, which are registered when the library loads
+4. arrays
+5. plain objects, using their own enumerable keys and omitting keys whose value is `undefined`
+
+Primitives come first, so a registered type whose `match` accepts strings, such as an `Email` type, is used only when reading its tag. Anything else fails, such as `undefined` outside an object, a function, or an instance of an unregistered class: `$.x: cannot stringify Widget (register a type for it with JSTN.register)`.
+
+When reading, `[...]` becomes an array, `{...}` a plain object, and each tag is looked up among the registered types. An unknown tag fails with `unknown tag "Widget"` and its position.
+
+`JSTN.register(...types)` accepts `createType` results, `createCollection` results, and generic collection factories. A factory is called with `unknown` for each of its parameters, so `JSTN.register(sortedSet)` registers `sortedSet(unknown)`:
+
+- Registering the same value again does nothing.
+- Registering a different type with a tag that is already registered fails with `tag "Money" is already registered`. `Date`, `Set` and `Map` are taken.
+- A registered type's name, such as `money` or `sortedSet`, also becomes available to `parseSchema` without passing `types`.
+
+The registry is global to the process. Register the same types on both sides of a connection.
+
+`JSTN.transformer` is a tRPC data transformer. `serialize` returns compact JSTN text, and `deserialize` reads it back with `unknown`. Both pass `undefined` through unchanged, so procedures with no input or no result work.
+
 ## Standard Schema
 
 Every `Type` has a `~standard` property that implements [Standard Schema](https://standardschema.dev) v1:

@@ -2,7 +2,7 @@ import { identifierFor } from "../core/strings.ts"
 import { checkDepth, describeNode, describeValue, guard, mismatch } from "../core/error.ts"
 import { toType } from "../core/schema.ts"
 import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
-import { resolveNamed, type Named } from "./custom.ts"
+import { resolveNamed, TAGGED, type Named } from "./custom.ts"
 import { tuple } from "./tuple.ts"
 
 export type CollectionSpec<A, I, C> = Named<unknown> & {
@@ -52,7 +52,9 @@ export function createCollection(spec: CollectionSpec<Schema | readonly Schema[]
   const args = (many ? spec.items : [spec.items]).map((item) => toType(item))
   const item = many ? tuple(...args) : args[0]!
   const name = `${identifierFor(tag)}(${args.map((arg) => arg.name).join(", ")})`
-  return listType(tag, name, item, { match, toItems: (value) => spec.toItems(value), fromItems: (items) => spec.fromItems(items) })
+  const type = listType(tag, name, item, { match, toItems: (value) => spec.toItems(value), fromItems: (items) => spec.fromItems(items) })
+  TAGGED.set(type, { tag, match })
+  return type
 }
 
 export function set<S extends Schema>(item: S): Type<Set<Infer<S>>> {

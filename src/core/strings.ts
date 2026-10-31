@@ -1,4 +1,4 @@
-export const RESERVED: readonly string[] = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint"]
+export const RESERVED: readonly string[] = ["true", "false", "null", "NaN", "Infinity", "number", "string", "boolean", "bigint", "unknown"]
 
 export const IDENT = /[A-Za-z_$][A-Za-z0-9_$]*/y
 const NEEDS_ESCAPE = /["\\\u0000-\u001f\u007f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g
