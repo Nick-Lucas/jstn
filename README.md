@@ -6,9 +6,29 @@ JavaScript Type Notation: schemas plus a data format that looks like JavaScript 
 - **Data** keeps the types JSON loses, such as `Date`, `bigint`, `Set`, `Map` and your own classes.
 - **The API** works like `JSON`, with a schema as the second argument.
 
-<!-- jstn-schema { id: bigint, name: string, joined: date, roles: set(string), manager: union(string, null) } -->
+A schema in TypeScript:
 
-```jstn
+```ts
+import { JSTN, bigint, date, set, string, union } from "jstn"
+
+const User = JSTN.schema({
+  id: bigint,
+  name: string,
+  joined: date,
+  roles: set(string),
+  manager: union(string, null),
+})
+```
+
+The same schema serialised, from `User.name`. It is valid TypeScript, so you can paste it back into your code:
+
+```ts jstn-schema
+{ id: bigint, name: string, joined: date, roles: set(string), manager: union(string, null) }
+```
+
+A `User` value serialised, from `JSTN.stringify(ada, User, 2)`:
+
+```ts jstn
 {
   id: 9007199254740993n,
   name: "Ada",
@@ -29,15 +49,15 @@ npm install github:Nick-Lucas/jstn
 It needs Node 26 or later and TypeScript 5.5 or later, and it is ESM only. It has no runtime dependencies.
 
 ```ts
-import { JSTN, set, union } from "jstn"
+import { JSTN, bigint, date, set, string, union } from "jstn"
 import type { Infer } from "jstn"
 
 const User = JSTN.schema({
-  id: BigInt,
-  name: String,
-  joined: Date,
-  roles: set(String),
-  manager: union(String, null),
+  id: bigint,
+  name: string,
+  joined: date,
+  roles: set(string),
+  manager: union(string, null),
 })
 
 type User = Infer<typeof User>
@@ -142,7 +162,7 @@ The request body is compact:
 
 <!-- jstn-schema { id: bigint, placedAt: date, lines: array({ sku: string, quantity: number }) } -->
 
-```jstn
+```ts jstn
 {id:9007199254740993n,placedAt:Date(2026-10-31T09:30:00Z),lines:[{sku:"A-1",quantity:2}]}
 ```
 
@@ -209,7 +229,7 @@ JSTN.stringify({ title: "Docs", href: new URL("https://example.com/docs") }, Lin
 
 <!-- jstn-schema { title: string, href: url } -->
 
-```jstn
+```ts jstn
 {title:"Docs",href:URL(https://example.com/docs)}
 ```
 
@@ -260,7 +280,7 @@ JSTN.stringify({ scores: new SortedSet([3, 1, 2]) }, Leaderboard)
 
 <!-- jstn-schema { scores: sortedSet(number) } -->
 
-```jstn
+```ts jstn
 {scores:SortedSet[1,2,3]}
 ```
 

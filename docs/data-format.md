@@ -2,7 +2,7 @@
 
 JSTN data looks like JavaScript literals. This schema and document use every data feature:
 
-```jstn-schema
+```ts jstn-schema
 {
   name: string,
   "display name": string,
@@ -19,7 +19,7 @@ JSTN data looks like JavaScript literals. This schema and document use every dat
 }
 ```
 
-```jstn
+```ts jstn
 // Line comments and /* block comments */ may appear between any two tokens.
 {
   name: "Ada",
@@ -75,7 +75,7 @@ Pretty output follows these rules:
 
 Object entries follow schema order, and `Set` and `Map` items follow insertion order. A key is written bare when it is an identifier, including keywords such as `null`, and quoted otherwise. Strings are always written with double quotes. A date is written with `toISOString()`, with `.000Z` shortened to `Z`.
 
-```jstn-schema
+```ts jstn-schema
 {
   someObj: { inner: boolean },
   someArr: array(number),
@@ -84,7 +84,7 @@ Object entries follow schema order, and `Set` and `Map` items follow insertion o
 }
 ```
 
-```jstn
+```ts jstn
 {
   someObj: {
     inner: true,

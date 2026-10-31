@@ -3,7 +3,7 @@ import { JSTN, createType } from "../src/index.ts"
 import type { Type } from "../src/index.ts"
 import { registry } from "./support/fixtures.ts"
 
-type Block = { readonly file: string; readonly lang: string; readonly flags: string; readonly body: string; readonly line: number }
+type Block = { readonly file: string; readonly fence: string; readonly kind: string; readonly body: string; readonly line: number }
 
 type FileSystem = {
   readFileSync(path: string, encoding: "utf8"): string
@@ -37,15 +37,15 @@ function blocksIn(file: string): Block[] {
   const text = fs.readFileSync(`${root}/${file}`, "utf8")
   const fenced = [...text.matchAll(/^```(\S*)([^\n]*)\n([\s\S]*?)^```$/gm)].map((match) => ({
     file,
-    lang: match[1] ?? "",
-    flags: (match[2] ?? "").trim(),
+    fence: `${match[1] ?? ""}${match[2] ?? ""}`.trim(),
+    kind: (match[2] ?? "").trim() || (match[1] ?? ""),
     body: match[3] ?? "",
     line: lineOf(text, match.index),
   }))
   const hidden = [...text.matchAll(/^<!-- jstn-schema ([\s\S]*?) -->$/gm)].map((match) => ({
     file,
-    lang: "jstn-schema",
-    flags: "hidden",
+    fence: "hidden",
+    kind: "jstn-schema",
     body: match[1] ?? "",
     line: lineOf(text, match.index),
   }))
@@ -53,9 +53,9 @@ function blocksIn(file: string): Block[] {
 }
 
 const blocks = files.flatMap(blocksIn)
-const schemas = blocks.filter((block) => block.lang === "jstn-schema")
-const data = blocks.filter((block) => block.lang === "jstn")
-const code = blocks.filter((block) => block.lang === "ts" && block.flags !== "nocheck")
+const schemas = blocks.filter((block) => block.kind === "jstn-schema")
+const data = blocks.filter((block) => block.kind === "jstn")
+const code = blocks.filter((block) => block.kind === "ts")
 
 function schemaBefore(block: Block): Type<unknown> {
   const source = schemas.findLast((schema) => schema.file === block.file && schema.line < block.line)
@@ -84,12 +84,14 @@ describe("documentation", () => {
     expect(code.length).toBeGreaterThan(0)
   })
 
-  it("uses only known fence languages", () => {
-    expect(blocks.filter((block) => !["ts", "jstn", "jstn-schema", "ebnf", "text", "sh"].includes(block.lang)).map(label)).toStrictEqual([])
+  it("uses only known fences, with ts highlighting for JSTN", () => {
+    const known = ["ts", "ts jstn", "ts jstn-schema", "ts nocheck", "ebnf", "text", "sh", "hidden"]
+    expect(blocks.filter((block) => !known.includes(block.fence)).map(label)).toStrictEqual([])
   })
 
   it.each(schemas.map((block) => [label(block), block]))("parses the jstn-schema block at %s", (_, block) => {
-    expect(() => JSTN.parseSchema(block.body, { types })).not.toThrow()
+    const type = JSTN.parseSchema(block.body, { types })
+    if (!block.body.trim().includes("\n")) expect(type.name).toBe(block.body.trim())
   })
 
   it.each(data.map((block) => [label(block), block]))("parses the jstn block at %s against the schema above it", (_, block) => {

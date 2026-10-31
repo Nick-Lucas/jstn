@@ -1608,10 +1608,10 @@ This test checks the paste property from §1 with the real compiler. Like `compi
 ### test/docs.test.ts (unit C)
 
 1. The test extracts the fenced blocks from `README.md` and every `docs/*.md` file, which it locates relative to the test file, not the working directory.
-2. Every ```` ```jstn-schema ```` block, and every hidden `<!-- jstn-schema ... -->` comment, parses with the fixture registry plus a `url` type (tag `URL`).
-3. Every ```` ```jstn ```` block parses against the nearest preceding schema in the same file, and `parse(stringify(parse(x)))` is stable. A single-line block must equal the compact `stringify` output exactly.
+2. Every ```` ```ts jstn-schema ```` block, and every hidden `<!-- jstn-schema ... -->` comment, parses with the fixture registry plus a `url` type (tag `URL`). A single-line schema must equal its canonical `name` exactly.
+3. Every ```` ```ts jstn ```` block parses against the nearest preceding schema in the same file, and `parse(stringify(parse(x)))` is stable. A single-line block must equal the compact `stringify` output exactly.
 4. Every ```` ```ts ```` block is written to a temporary project that maps `jstn` to `src/index.ts` and adds the `dom` lib, and `tsc` must report no errors in it. A ```` ```ts nocheck ```` block is skipped.
-5. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed. Only `ts`, `jstn`, `jstn-schema`, `ebnf`, `text` and `sh` fences are allowed.
+5. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed. Only `ts`, `ts jstn`, `ts jstn-schema`, `ts nocheck`, `ebnf`, `text` and `sh` fences are allowed. JSTN blocks are labelled `ts` first so GitHub highlights them, and the second word tells the test what the block holds.
 
 ---
 

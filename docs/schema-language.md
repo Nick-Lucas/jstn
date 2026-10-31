@@ -7,7 +7,7 @@ Schema text is the TypeScript builder syntax. The same text works in two places:
 
 Every `Type.name` is written in this syntax, so you can paste a serialised schema into TypeScript unchanged.
 
-```jstn-schema
+```ts jstn-schema
 {
   someNum: number,
   someStr: string,
