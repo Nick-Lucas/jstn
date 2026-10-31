@@ -14,12 +14,13 @@ const boomMoney = createType<Money>({ name: "Money", ...moneyParts, stringify: (
 const numberMoney = createType<Money>({ name: "Money", ...moneyParts, stringify: () => 5 as unknown as string })
 const odd = createType<string>({ name: "Odd", match: () => true, parse: () => { throw "oops" }, stringify: (s) => s })
 
-const bag = createCollection("Bag", <S extends Schema>(item: S) => ({
-  items: item,
-  match: (v: unknown) => Array.isArray(v),
-  toItems: (_: unknown[]): Infer<S>[] => { throw new Error("no items") },
-  fromItems: (_: Infer<S>[]): unknown[] => { throw new Error("bad bag") },
-}))
+const bag = createCollection({
+  name: "Bag",
+  items: Number,
+  match: Array.isArray,
+  fromItems: (): number[] => { throw new Error("bad bag") },
+  toItems: (): number[] => { throw new Error("no items") },
+})
 
 const tail = `  someTuple: [1, "value"],
   someUnion: 3,
@@ -37,7 +38,6 @@ const extraKey = `{\n  someNum: 1, someStr: "value",\n  someDate: Date(2026-01-0
 const parse = (text: string, schema: Schema) => () => JSTN.parse(text, schema)
 const schemaText = (text: string, types = {}) => () => JSTN.parseSchema(text, { types })
 const loose = (value: unknown) => value as Schema
-const parameterless = (() => ({ items: Number, match: () => true, toItems: (v: number[]) => v, fromItems: (v: number[]) => v })) as unknown as (item: Schema) => CollectionSpec<number[], NumberConstructor>
 const deepPath = `$${"[0]".repeat(512)}`
 
 type Row = [string, () => unknown, string, string, number | undefined, number | undefined]
@@ -101,7 +101,7 @@ const rows: Row[] = [
   ["invalid date: year -000000 is not allowed", parse("Date(-000000-01-01)", Date), "$: invalid Date \"-000000-01-01\": year -000000 is not allowed (line 1, column 1)", "$", 1, 1],
   ["invalid date: outside the Date range", parse("Date(+275760-09-13T00:00:00.001Z)", Date), "$: invalid Date \"+275760-09-13T00:00:00.001Z\": outside the Date range (line 1, column 1)", "$", 1, 1],
   ["non-Error from parse", parse("Odd(x)", odd), "$: invalid Odd \"x\": oops (line 1, column 1)", "$", 1, 1],
-  ["fromItems throws", parse("Bag[1]", bag(Number)), "$: invalid Bag<number>: bad bag (line 1, column 1)", "$", 1, 1],
+  ["fromItems throws", parse("Bag[1]", bag), "$: invalid Bag<number>: bad bag (line 1, column 1)", "$", 1, 1],
 
   ["unknown key on encode", () => JSTN.validate({ a: 1, b: 2 }, { a: Number }), "$.b: unknown key", "$.b", undefined, undefined],
   ["missing key on encode", () => JSTN.validate({}, { a: Number }), "$: missing required key \"a\"", "$", undefined, undefined],
@@ -111,12 +111,11 @@ const rows: Row[] = [
   ["union on encode", () => JSTN.validate(true, union(Number, String)), "$: expected number | string, got boolean true", "$", undefined, undefined],
   ["invalid Date on encode", () => JSTN.stringify(new Date(Number.NaN), Date), "$: expected Date, got invalid Date", "$", undefined, undefined],
   ["stringify returns a non-string", () => JSTN.stringify(new Money("1", "GBP"), numberMoney), "$: cannot stringify Money: stringify must return a string", "$", undefined, undefined],
-  ["toItems throws", () => JSTN.stringify([1], bag(Number)), "$: cannot stringify Bag<number>: no items", "$", undefined, undefined],
+  ["toItems throws", () => JSTN.stringify([1], bag), "$: cannot stringify Bag<number>: no items", "$", undefined, undefined],
   ["collection mismatch on encode", () => JSTN.validate([1], set(Number)), "$: expected Set<number>, got array", "$", undefined, undefined],
 
   ["bad custom name", () => createType({ name: "x y", match: () => true, parse: (t) => t, stringify: (t) => t }), "$: invalid type name \"x y\"", "$", undefined, undefined],
-  ["reserved collection name", () => createCollection("number", (s: Schema) => ({ items: s, match: () => true, toItems: (v: unknown[]) => v, fromItems: (v: unknown[]) => v })), "$: invalid type name \"number\"", "$", undefined, undefined],
-  ["parameterless define", () => createCollection("Bag", parameterless), "$: createCollection(\"Bag\") define must declare at least one parameter", "$", undefined, undefined],
+  ["reserved collection name", () => createCollection({ name: "number", items: Number, match: Array.isArray, fromItems: (v) => v, toItems: (v) => v }), "$: invalid type name \"number\"", "$", undefined, undefined],
   ["one-member union", () => union(...([Number] as unknown as [Schema, Schema])), "$: union() needs at least 2 members", "$", undefined, undefined],
   ["Set constructor", () => JSTN.schema(loose(Set)), "$: not a schema: Set (use set(...))", "$", undefined, undefined],
   ["Map constructor", () => JSTN.schema(loose(Map)), "$: not a schema: Map (use map(...))", "$", undefined, undefined],

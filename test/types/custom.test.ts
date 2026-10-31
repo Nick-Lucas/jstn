@@ -14,7 +14,7 @@ function fails(run: () => unknown): JSTNError {
 
 const pos = { line: 2, column: 10 }
 
-function moneyWith(overrides: Partial<Parameters<typeof createType<Money>>[0]>) {
+function moneyWith(overrides: Partial<{ name: string; match(v: unknown): boolean; parse(text: string): Money; stringify(m: Money): string }>) {
   return createType<Money>({
     name: "Money",
     match: (v) => v instanceof Money,
@@ -152,5 +152,39 @@ describe("name validation", () => {
 
   it.each(["Date", "Set", "Map", "_x", "$y", "Money2"])("accepts %o", (name) => {
     expect(moneyWith({ name }).name).toBe(name)
+  })
+})
+
+describe("createType with a class name", () => {
+  class Point {
+    x: number
+    constructor(x: number) {
+      this.x = x
+    }
+  }
+  const point = createType({ name: Point, parse: (text) => new Point(Number(text)), stringify: (p) => String(p.x) })
+
+  it("takes its tag from the class and matches instances by default", () => {
+    expect(point.name).toBe("Point")
+    expect(JSTN.stringify(new Point(3), point)).toBe("Point(3)")
+    expect(JSTN.parse("Point(4)", point)).toStrictEqual(new Point(4))
+    expect(fails(() => JSTN.stringify({ x: 1 }, point)).message).toBe("$: expected Point, got object")
+  })
+
+  it("lets an explicit match override the default", () => {
+    const positive = createType({ name: Point, match: (v) => v instanceof Point && v.x > 0, parse: (text) => new Point(Number(text)), stringify: (p) => String(p.x) })
+    expect(JSTN.is(new Point(1), positive)).toBe(true)
+    expect(JSTN.is(new Point(-1), positive)).toBe(false)
+    expect(fails(() => JSTN.parse("Point(-1)", positive)).message).toBe("$: invalid Point \"-1\": parse result rejected by match (line 1, column 1)")
+  })
+
+  it("rejects an anonymous class", () => {
+    const anonymous = (() => class {})()
+    expect(fails(() => createType({ name: anonymous, parse: () => new anonymous(), stringify: () => "" })).message).toBe("$: invalid type name \"\"")
+  })
+
+  it("requires match for a string name at runtime", () => {
+    const loose = { name: "Point", parse: (text: string) => new Point(Number(text)), stringify: (p: Point) => String(p.x) } as unknown as Parameters<typeof createType<Point>>[0]
+    expect(fails(() => createType(loose)).message).toBe("$: \"Point\" needs a match function")
   })
 })

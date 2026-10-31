@@ -13,7 +13,6 @@ const os: { tmpdir(): string } = await import("node:os" as string)
 
 const root = `${(import.meta as { dirname: string }).dirname}/..`
 const imports = `import { JSTN, array, createCollection, createType, set } from "${root}/src/index.ts"\n`
-const spec = "match: () => true, toItems: (v: number[]) => v, fromItems: (v: number[]) => v"
 
 const rejected: [string, string][] = [
   ["stringify of a wrong field type", "JSTN.stringify({ a: \"x\" }, { a: Number })"],
@@ -22,9 +21,12 @@ const rejected: [string, string][] = [
   ["stringify of a string against the empty shape", "JSTN.stringify(\"x\", {})"],
   ["stringify of a key against the empty shape", "JSTN.stringify({ a: 1 }, {})"],
   ["createType whose stringify does not take the parse result", "createType({ name: \"N\", match: () => true, parse: Number, stringify: (s: string) => s })"],
-  ["createCollection with no parameters", `createCollection("Zero", () => ({ items: Number, ${spec} }))`],
-  ["createCollection with a rest parameter", `createCollection("Rest", (...items: NumberConstructor[]) => ({ items: Number, ${spec} }))`],
-  ["createCollection with a default parameter", `createCollection("Default", (item = Number) => ({ items: item, ${spec} }))`],
+  ["createType with a string name and no match", "createType({ name: \"N\", parse: Number, stringify: String })"],
+  ["createType whose parse disagrees with its match guard", "createType({ name: \"N\", match: (v) => typeof v === \"number\", parse: (t) => t, stringify: String })"],
+  ["createType whose parse disagrees with its class", "createType({ name: Date, parse: Number, stringify: String })"],
+  ["createCollection with a string name and no match", "createCollection({ name: \"Bag\", items: Number, fromItems: (items) => items, toItems: (v) => v })"],
+  ["createCollection whose toItems yields the wrong items", "createCollection({ name: Set, items: Number, fromItems: (items) => new Set(items), toItems: () => [\"x\"] })"],
+  ["createCollection whose fromItems ignores the item type", "createCollection({ name: Set, items: Number, fromItems: (items: string[]) => new Set(items), toItems: (v) => v })"],
 ]
 const accepted = "JSTN.stringify({ a: 1 }, { a: Number })"
 

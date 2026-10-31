@@ -1,23 +1,20 @@
-import { assertTypeName, checkDepth, describeNode, describeValue, guard, JSTNError, mismatch } from "../core/error.ts"
+import { checkDepth, describeNode, describeValue, guard, mismatch } from "../core/error.ts"
 import { toType } from "../core/schema.ts"
-import { quote } from "../core/strings.ts"
 import { defineType, type Infer, type Schema, type Type } from "../core/type.ts"
+import { resolveNamed, type Named } from "./custom.ts"
 import { tuple } from "./tuple.ts"
 import { isUnion } from "./union.ts"
 
-export interface CollectionSpec<C, S extends Schema> {
-  readonly items: S
-  match(value: unknown): boolean
-  toItems(value: C): Iterable<Infer<S>>
-  fromItems(items: Infer<S>[]): C
+export type CollectionSpec<A, I, C> = Named<unknown> & {
+  readonly items: A
+  fromItems(items: I[]): C
+  toItems(value: NoInfer<C>): Iterable<I>
 }
 
-type CollectionInfo = { readonly name: string; readonly arity: number }
-type PlainParameters<A extends unknown[]> = number extends A["length"] ? { "define must declare at least one plain parameter": true } : unknown
+type InferAll<A extends readonly Schema[]> = { -readonly [K in keyof A]: Infer<A[K]> }
+type ListSpec<C, I> = { match(value: unknown): boolean; toItems(value: C): Iterable<I>; fromItems(items: I[]): C }
 
-const COLLECTIONS = new WeakMap<Function, CollectionInfo>()
-
-function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: Pick<CollectionSpec<C, Type<I>>, "match" | "toItems" | "fromItems">): Type<C> {
+function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: ListSpec<C, I>): Type<C> {
   return defineType(
     name,
     (value, path) => {
@@ -34,6 +31,10 @@ function listType<C, I>(tag: string | null, name: string, item: Type<I>, spec: P
   )
 }
 
+function isSchemaList(items: Schema | readonly Schema[]): items is readonly Schema[] {
+  return Array.isArray(items)
+}
+
 function identity<T>(value: T): T {
   return value
 }
@@ -44,45 +45,39 @@ export function array<S extends Schema>(item: S): Type<Infer<S>[]> {
   return listType<Infer<S>[], Infer<S>>(null, name, type, { match: Array.isArray, toItems: identity, fromItems: identity })
 }
 
-export function createCollection<A extends [Schema, ...Schema[]], C, S extends Schema>(
-  name: string,
-  define: (...args: A) => CollectionSpec<C, S> & PlainParameters<A>,
-): (...args: A) => Type<C> {
-  assertTypeName(name)
-  if (define.length < 1) throw new JSTNError(`createCollection(${quote(name)}) define must declare at least one parameter`, [])
-  const factory = (...args: A): Type<C> => {
-    const spec = define(...args)
-    return listType(name, `${name}<${args.map((arg) => toType(arg).name).join(", ")}>`, toType(spec.items), spec)
-  }
-  COLLECTIONS.set(factory, { name, arity: define.length })
-  return factory
+export function createCollection<const A extends readonly [Schema, ...Schema[]], C>(spec: CollectionSpec<A, InferAll<A>, C>): Type<C>
+export function createCollection<S extends Schema, C>(spec: CollectionSpec<S, Infer<S>, C>): Type<C>
+export function createCollection(spec: CollectionSpec<Schema | readonly Schema[], unknown, unknown>): Type<unknown> {
+  const { tag, match } = resolveNamed(spec)
+  const many = isSchemaList(spec.items)
+  const args = (many ? spec.items : [spec.items]).map((item) => toType(item))
+  const item = many ? tuple(...args) : args[0]!
+  const name = `${tag}<${args.map((arg) => arg.name).join(", ")}>`
+  return listType(tag, name, item, { match, toItems: (value) => spec.toItems(value), fromItems: (items) => spec.fromItems(items) })
 }
 
-export function collectionInfo(fn: unknown): CollectionInfo | undefined {
-  return typeof fn === "function" ? COLLECTIONS.get(fn) : undefined
-}
-
-export const set: <S extends Schema>(item: S) => Type<Set<Infer<S>>> = createCollection("Set", <S extends Schema>(item: S) => ({
-  items: item,
-  match: (value: unknown) => value instanceof Set,
-  toItems: (value: Set<Infer<S>>) => value,
-  fromItems: (items: Infer<S>[]) => {
-    const out = new Set(items)
-    if (out.size !== items.length) throw new Error("duplicate item")
-    return out
-  },
-}))
-
-export const map: <K extends Schema, V extends Schema>(key: K, value: V) => Type<Map<Infer<K>, Infer<V>>> = createCollection(
-  "Map",
-  <K extends Schema, V extends Schema>(key: K, value: V) => ({
-    items: tuple(key, value),
-    match: (v: unknown) => v instanceof Map,
-    toItems: (v: Map<Infer<K>, Infer<V>>) => v.entries(),
-    fromItems: (items: [Infer<K>, Infer<V>][]) => {
-      const out = new Map(items)
-      if (out.size !== items.length) throw new Error("duplicate key")
+export function set<S extends Schema>(item: S): Type<Set<Infer<S>>> {
+  return createCollection({
+    name: Set,
+    items: item,
+    fromItems: (items) => {
+      const out = new Set(items)
+      if (out.size !== items.length) throw new Error("duplicate item")
       return out
     },
-  }),
-)
+    toItems: (value) => value,
+  })
+}
+
+export function map<K extends Schema, V extends Schema>(key: K, value: V): Type<Map<Infer<K>, Infer<V>>> {
+  return createCollection({
+    name: Map,
+    items: [key, value],
+    fromItems: (entries) => {
+      const out = new Map(entries)
+      if (out.size !== entries.length) throw new Error("duplicate key")
+      return out
+    },
+    toItems: (m) => m.entries(),
+  })
+}

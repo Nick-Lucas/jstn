@@ -67,7 +67,7 @@ A `Schema` is one of these:
 - a shorthand: `Number`, `String`, `Boolean`, `BigInt`, `Date`, or `null`
 - a plain object literal whose values are schemas or `optional(schema)`
 
-The builders are `array(item)`, `tuple(...items)`, `union(a, b, ...rest)`, `set(item)`, `map(key, value)`, `optional(schema)`, `createType(spec)` and `createCollection(name, define)`. `JSTN.schema(schema)` returns the normalised `Type`, and `Infer<typeof T>` gives its TypeScript type. `Array`, `Set`, `Map` and `Object` are compile errors and throw at runtime with a hint such as `$: not a schema: Array (use array(...))`.
+The builders are `array(item)`, `tuple(...items)`, `union(a, b, ...rest)`, `set(item)`, `map(key, value)`, `optional(schema)`, `createType(spec)` and `createCollection(spec)`. `JSTN.schema(schema)` returns the normalised `Type`, and `Infer<typeof T>` gives its TypeScript type. `Array`, `Set`, `Map` and `Object` are compile errors and throw at runtime with a hint such as `$: not a schema: Array (use array(...))`.
 
 Object types are strict. An unknown key fails with `unknown key` in both directions. An `optional(...)` field may be absent, and `stringify` omits a field whose value is `undefined`, so its inferred type is `k?: T | undefined`. `parse` never produces `undefined`. A required field that holds `undefined` fails. `optional()` is valid only as an object field. The empty shape `{}` infers `Record<string, never>`, because it accepts only an object with no keys.
 
@@ -101,18 +101,19 @@ A union tries its members in declaration order, and the first member that succee
 - `T[]` binds tighter than `|`, so `number | string[]` is not `(number | string)[]`. A leading `|` is allowed.
 - `[]` is the empty tuple, `{}` is the empty object, and `"k"?: T` is an optional field.
 - The built-in names are `number`, `string`, `boolean`, `bigint`, `null`, `Date`, `Set` and `Map`.
-- `options.types` adds names. A value made by `createCollection` must be written with exactly its number of type arguments, as in `SortedSet<number>`. Any other value is a schema used as a bare name. A function that is neither fails with `"Foo" is not a schema or collection`.
+- `options.types` adds names. A schema is used as a bare name. A function that is not a shorthand is a collection factory, written with exactly as many type arguments as it declares parameters, as in `SortedSet<number>`. A function with no declared parameters fails with `"Foo" is not a schema or collection`, and a factory that does not return a `Type` fails where it is used.
 - A registry key must be an identifier that is not `true`, `false`, `NaN` or `Infinity`, and it cannot be a built-in name.
-- Every `Type.name` is canonical schema text, and `parseSchema(t.name, { types }).name === t.name`. The exception is a `createType` named `Date`, `Set` or `Map`, because the text name resolves to the built-in.
+- Every `Type.name` is canonical schema text, and `parseSchema(t.name, { types }).name === t.name`. The exceptions are a `createType` or `createCollection` named `Date`, `Set` or `Map`, because the text name resolves to the built-in, and a collection with a fixed item schema registered as a bare name.
 
 ## Define custom types and collections
 
-`createType` makes a tagged scalar. `parse` receives the payload text and `stringify` returns it. The writer quotes the payload when needed, so your code never escapes anything. TypeScript infers `T` from `parse` only, so `{ parse: Number, stringify: String }` gives `Type<number>`. Write `parse` before `stringify`. If `stringify` comes first, `T` can be inferred as `unknown`. You can also pass the type argument explicitly as `createType<Money>({...})`.
+`createType` makes a tagged scalar. `parse` receives the payload text and `stringify` returns it. The writer quotes the payload when needed, so your code never escapes anything.
+
+`name` is the tag. It is either a string, which needs a `match` function, or a class, whose `name` becomes the tag. With a class, `match` is optional and defaults to `value instanceof Class`.
 
 ```ts
 const money = createType({
-  name: "Money",
-  match: (v) => v instanceof Money,
+  name: Money,
   parse: (text) => {
     const m = /^(-?\d+(?:\.\d+)?) ([A-Z]{3})$/.exec(text)
     if (!m) throw new Error("expected \"<amount> <CCY>\"")
@@ -120,31 +121,51 @@ const money = createType({
   },
   stringify: (m) => `${m.amount} ${m.currency}`,
 })
+
+const cents = createType({ name: "Cents", match: (v) => typeof v === "bigint", parse: BigInt, stringify: String })
 ```
 
-`createCollection` makes a tagged list type. Declare type parameters as plain parameters, with no defaults or rest. A `define` with no parameters, or with a rest, default or optional parameter, is a compile error, and one with no declared parameters also throws at runtime. `items` may be any schema, so a collection can hold pairs or objects.
+You never write the type yourself. TypeScript takes `T` from the class, from `match` when it is a type guard, and from `parse`. A simple check such as `(v) => v instanceof Money` or `(v) => typeof v === "bigint"` is a type guard automatically. A compound check such as `(v) => v instanceof Date && !Number.isNaN(v.getTime())` is not, so `T` then comes from the class or from `parse`. If these sources disagree, the call does not compile. `stringify` never contributes to `T`.
+
+`createCollection` makes a tagged list type. It takes the same `name` and `match` as `createType`, plus `items`, `fromItems` and `toItems`. `items` is the schema of each item. `fromItems` builds the collection from the decoded items, and `toItems` lists them for encoding. The collection type comes from what `fromItems` returns, so write `fromItems` before `toItems`.
+
+To make a generic collection, wrap `createCollection` in a generic function. TypeScript cannot apply a generic class such as `SortedSet` to a type argument by itself, so the function's type parameter carries the item type. Nothing inside the spec needs a type annotation.
 
 ```ts
-const sortedSet = createCollection("SortedSet", <S extends Schema>(item: S) => ({
+const sortedSet = <S extends Schema>(item: S) => createCollection({
+  name: SortedSet,
   items: item,
-  match: (v: unknown) => v instanceof SortedSet,
-  toItems: (v: SortedSet<Infer<S>>) => v.items,
-  fromItems: (items: Infer<S>[]) => new SortedSet(items),
-}))
+  fromItems: (items) => new SortedSet(items),
+  toItems: (v) => v.items,
+})
 ```
 
-For object items, write the item type as `Infer<{ ... }>` over the parameters. In generic code, TypeScript cannot match `Infer<{ key: K; value: V }>` with the spelled-out `{ key: Infer<K>; value: Infer<V> }`.
+Pass an array as `items` to give a collection several type arguments. Each item is then a tuple, and the name lists every argument, as in `Map<string, number>`. `set` and `map` are built exactly this way.
 
 ```ts
-const entries = createCollection("Entries", <K extends Schema, V extends Schema>(key: K, value: V) => ({
-  items: { key, value },
-  match: (v: unknown) => v instanceof Entries,
-  toItems: (v: Entries<Infer<{ key: K; value: V }>>) => v.items,
-  fromItems: (items: Infer<{ key: K; value: V }>[]) => new Entries(items),
-}))
+const pairs = <K extends Schema, V extends Schema>(key: K, value: V) => createCollection({
+  name: "Pairs",
+  items: [key, value],
+  match: Array.isArray,
+  fromItems: (items) => items,
+  toItems: (v) => v,
+})
 ```
 
-A name must be an identifier other than `true`, `false`, `null`, `NaN`, `Infinity`, `number`, `string`, `boolean` and `bigint`. Errors thrown by `parse`, `stringify`, `toItems` and `fromItems` are wrapped in a `JSTNError` that keeps the original as `cause`.
+A collection with a fixed item schema needs no wrapper: `createCollection({ name: Bag, items: Number, fromItems, toItems })` is a `Type<Bag>`. Register the wrapper function, not one of its results, when you use a generic collection in schema text: `{ types: { SortedSet: sortedSet } }`.
+
+A name must be an identifier other than `true`, `false`, `null`, `NaN`, `Infinity`, `number`, `string`, `boolean` and `bigint`. An anonymous class therefore fails. Errors thrown by `parse`, `stringify`, `toItems` and `fromItems` are wrapped in a `JSTNError` that keeps the original as `cause`.
+
+## Use with Standard Schema
+
+Every `Type`, including the result of `JSTN.schema`, implements [Standard Schema](https://standardschema.dev) v1. Any library that accepts a Standard Schema, such as a form library or a router, can use a JSTN schema directly.
+
+```ts
+const User = JSTN.schema({ name: String, tags: array(String) })
+User["~standard"].validate({ name: "Ada", tags: ["x", 1] })
+```
+
+`validate` is synchronous and its vendor is `"jstn"`. On success it returns `{ value }`, with the input value itself. On failure it returns one issue, `{ issues: [{ message, path }] }`, where `message` is the error's `reason` and `path` is its `segments`, such as `["tags", 1]`. The inferred output type is `Infer<typeof User>`. The `StandardSchemaV1` types are exported, so you need no extra dependency.
 
 ## Validate without serialising
 
@@ -154,7 +175,7 @@ Trust the `true` branch of `is` only. TypeScript also narrows the `false` branch
 
 ## Read errors
 
-The library throws only `JSTNError`. Its fields are `reason`, `path`, `line` and `column`, and its `message` is `${path}: ${reason}`, followed by ` (line L, column C)` when a position is known. Errors from `parse` and `parseSchema` have a position. Errors from `stringify`, `validate` and `is` do not.
+The library throws only `JSTNError`. Its fields are `reason`, `path`, `segments`, `line` and `column`. `path` is the formatted path such as `$.someArr[2]`, and `segments` holds the same path as an array such as `["someArr", 2]`. Its `message` is `${path}: ${reason}`, followed by ` (line L, column C)` when a position is known. Errors from `parse` and `parseSchema` have a position. Errors from `stringify`, `validate` and `is` do not.
 
 ```text
 $.someArr[2]: expected number, got string "x" (line 6, column 16)
@@ -273,4 +294,4 @@ These details apply on top of the grammars:
 
 ## Requirements
 
-JSTN needs Node 26 or later and is ESM only. Consumers need TypeScript 5.4 or later, because `stringify` and `createType` use `NoInfer`. There are no runtime dependencies.
+JSTN needs Node 26 or later and is ESM only. Consumers need TypeScript 5.5 or later, because `createType` relies on inferred type guards and `stringify` uses `NoInfer`. There are no runtime dependencies.

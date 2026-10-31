@@ -208,10 +208,14 @@ describe("errors", () => {
     [{ "": money }, "$: invalid type name \"\""],
     [{ "1x": money }, "$: invalid type name \"1x\""],
     [{ Fn: () => money }, "$: \"Fn\" is not a schema or collection"],
-    [{ Arr: Array as unknown as Registry[string] }, "$: \"Arr\" is not a schema or collection"],
     [{ Three: 3 as unknown as Registry[string] }, "$: not a schema: number 3"],
   ])("rejects the registry %o before reading", (types, message) => {
     expect(failure(() => read("[", types))).toStrictEqual({ message, path: "$", line: undefined, column: undefined })
+  })
+
+  it("rejects a factory that does not return a type where it is used", () => {
+    const types = { Arr: Array as unknown as Registry[string] }
+    expect(failure(() => read("{ a: Arr<number> }", types))).toStrictEqual({ message: "$: \"Arr\" did not return a type (line 1, column 6)", path: "$", line: 1, column: 6 })
   })
 })
 

@@ -51,8 +51,8 @@ export function formatIsoDate(value: Date): string {
   return value.toISOString().replace(/\.000Z$/, "Z")
 }
 
-export const date: Type<Date> = createType<Date>({
-  name: "Date",
+export const date: Type<Date> = createType({
+  name: Date,
   match: (value) => value instanceof Date && !Number.isNaN(value.getTime()),
   parse: parseIsoDate,
   stringify: formatIsoDate,

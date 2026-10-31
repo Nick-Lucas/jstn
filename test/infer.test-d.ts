@@ -61,12 +61,13 @@ expectTypeOf(createType({ name: "Money", match: (v) => v instanceof Money, parse
 
 expectTypeOf(sortedSet(Number)).toEqualTypeOf<Type<SortedSet<number>>>()
 expectTypeOf(sortedSet({ a: String })).toEqualTypeOf<Type<SortedSet<{ a: string }>>>()
-const pairs = createCollection("Pairs", <K extends Schema, V extends Schema>(key: K, value: V) => ({
-  items: tuple(key, value),
-  match: (v: unknown) => Array.isArray(v),
-  toItems: (v: [Infer<K>, Infer<V>][]) => v,
-  fromItems: (items: [Infer<K>, Infer<V>][]) => items,
-}))
+const pairs = <K extends Schema, V extends Schema>(key: K, value: V) => createCollection({
+  name: "Pairs",
+  items: [key, value],
+  match: Array.isArray,
+  fromItems: (items) => items,
+  toItems: (v) => v,
+})
 expectTypeOf(pairs(String, Number)).toEqualTypeOf<Type<[string, number][]>>()
 class Box<T> {
   items: T[]
@@ -74,20 +75,30 @@ class Box<T> {
     this.items = items
   }
 }
-const entries = createCollection("Entries", <K extends Schema, V extends Schema>(key: K, value: V) => ({
+const entries = <K extends Schema, V extends Schema>(key: K, value: V) => createCollection({
+  name: Box,
   items: { key, value },
-  match: (v: unknown) => v instanceof Box,
-  toItems: (v: Box<Infer<{ key: K; value: V }>>) => v.items,
-  fromItems: (items: Infer<{ key: K; value: V }>[]) => new Box(items),
-}))
+  fromItems: (items) => new Box(items),
+  toItems: (v) => v.items,
+})
 expectTypeOf(entries(String, Number)).toEqualTypeOf<Type<Box<{ key: string; value: number }>>>()
-const wrapped = createCollection("Wrapped", <V extends Schema>(value: V) => ({
+const wrapped = <V extends Schema>(value: V) => createCollection({
+  name: Box,
   items: { value },
-  match: (v: unknown) => v instanceof Box,
-  toItems: (v: Box<Infer<{ value: V }>>) => v.items,
-  fromItems: (items: Infer<{ value: V }>[]) => new Box(items),
-}))
+  fromItems: (items) => new Box(items),
+  toItems: (v) => v.items,
+})
 expectTypeOf(wrapped(Date)).toEqualTypeOf<Type<Box<{ value: Date }>>>()
+expectTypeOf(createCollection({ name: Box, items: Number, fromItems: (items) => new Box(items), toItems: (v) => v.items })).toEqualTypeOf<Type<Box<number>>>()
+expectTypeOf(createCollection({ name: "Bag", items: [String, Boolean], match: Array.isArray, fromItems: (items) => items, toItems: (v) => v })).toEqualTypeOf<Type<[string, boolean][]>>()
+
+class Point {
+  x = 0
+}
+expectTypeOf(createType({ name: Point, parse: () => new Point(), stringify: (p) => String(p.x) })).toEqualTypeOf<Type<Point>>()
+expectTypeOf(createType({ name: Point, match: (v) => v instanceof Point && v.x > 0, parse: () => new Point(), stringify: (p) => String(p.x) })).toEqualTypeOf<Type<Point>>()
+expectTypeOf(createType({ name: "Point", match: (v) => v instanceof Point, stringify: (p) => String(p.x), parse: () => new Point() })).toEqualTypeOf<Type<Point>>()
+expectTypeOf(createType({ name: "Num", match: (v) => typeof v === "number" && v > 0, parse: Number, stringify: String })).toEqualTypeOf<Type<number>>()
 
 type Expected = {
   someNum: number
@@ -145,3 +156,20 @@ expectTypeOf<{ a: string } extends Parameters<typeof JSTN.stringify<{ a: NumberC
 expectTypeOf<Type<number> extends Type<number | string> ? true : false>().toEqualTypeOf<true>()
 expectTypeOf<Type<number | string> extends Type<number> ? true : false>().toEqualTypeOf<false>()
 expectTypeOf<Type<number>>().toExtend<Type<number | string>>()
+
+type OfficialIssue = { readonly message: string; readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }> | undefined }
+type OfficialResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<OfficialIssue> }
+interface OfficialStandardSchemaV1<Input = unknown, Output = Input> {
+  readonly "~standard": {
+    readonly version: 1
+    readonly vendor: string
+    readonly validate: (value: unknown) => OfficialResult<Output> | Promise<OfficialResult<Output>>
+    readonly types?: { readonly input: Input; readonly output: Output } | undefined
+  }
+}
+type InferOutput<T extends OfficialStandardSchemaV1> = NonNullable<T["~standard"]["types"]>["output"]
+const acceptStandard = <T extends OfficialStandardSchemaV1>(schema: T): InferOutput<T> => schema as never
+expectTypeOf(acceptStandard(S)).toEqualTypeOf<Expected>()
+expectTypeOf(acceptStandard(JSTN.schema({ a: Number, b: optional(set(String)) }))).toEqualTypeOf<{ a: number; b?: Set<string> | undefined }>()
+expectTypeOf(acceptStandard(sortedSet(Date))).toEqualTypeOf<SortedSet<Date>>()
+expectTypeOf(acceptStandard(number)).toEqualTypeOf<number>()

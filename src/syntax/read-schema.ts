@@ -1,8 +1,8 @@
 import { assertTypeName, checkDepth, JSTNError } from "../core/error.ts"
 import { isShorthand, optional, toType } from "../core/schema.ts"
 import { quote } from "../core/strings.ts"
-import type { Optional, Pos, Schema, Type } from "../core/type.ts"
-import { array, collectionInfo, map, set } from "../types/collection.ts"
+import { isType, type Optional, type Pos, type Schema, type Type } from "../core/type.ts"
+import { array, map, set } from "../types/collection.ts"
 import { date } from "../types/date.ts"
 import { bigint, boolean, nullType, number, string } from "../types/scalars.ts"
 import { tuple } from "../types/tuple.ts"
@@ -17,15 +17,14 @@ export interface ParseSchemaOptions {
 
 type Named =
   | { readonly kind: "type"; readonly type: Type<unknown> }
-  | { readonly kind: "generic"; readonly arity: number; readonly build: (args: Type<unknown>[]) => Type<unknown> }
+  | { readonly kind: "generic"; readonly arity: number; readonly build: (args: Type<unknown>[]) => unknown }
 
 const BUILTINS: Registry = { number, string, boolean, bigint, null: nullType, Date: date, Set: set, Map: map }
 
 function resolve(name: string, value: Registry[string]): Named {
   if (typeof value !== "function" || isShorthand(value)) return { kind: "type", type: toType(value) }
-  const info = collectionInfo(value)
-  if (info === undefined) throw new JSTNError(`${quote(name)} is not a schema or collection`, [])
-  return { kind: "generic", arity: info.arity, build: (args) => value(...args) }
+  if (value.length === 0) throw new JSTNError(`${quote(name)} is not a schema or collection`, [])
+  return { kind: "generic", arity: value.length, build: (args) => value(...args) }
 }
 
 function resolveNames(registry: Registry): Map<string, Named> {
@@ -117,7 +116,9 @@ export function readSchema(text: string, registry: Registry): Type<unknown> {
     if (args.length !== named.arity) {
       fail(`${name} expects ${typeArguments(named.arity)}, got ${args.length}`, token.pos)
     }
-    return named.build(args)
+    const type = named.build(args)
+    if (!isType(type)) return fail(`${name} did not return a type`, token.pos)
+    return type
   }
 
   function readObject(depth: number): Type<unknown> {

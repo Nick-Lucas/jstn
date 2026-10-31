@@ -19,6 +19,8 @@ describe("JSTNError", () => {
     expect(error.name).toBe("JSTNError")
     expect(error.reason).toBe("expected number, got string \"x\"")
     expect(error.path).toBe("$.someArr[2]")
+    expect(error.segments).toStrictEqual(["someArr", 2])
+    expect(Object.isFrozen(error.segments)).toBe(true)
     expect(error.line).toBe(6)
     expect(error.column).toBe(16)
     expect(error.message).toBe("$.someArr[2]: expected number, got string \"x\" (line 6, column 16)")

@@ -11,8 +11,7 @@ export class Money {
 }
 
 export const money = createType({
-  name: "Money",
-  match: (v) => v instanceof Money,
+  name: Money,
   parse: (text) => {
     const m = /^(-?\d+(?:\.\d+)?) ([A-Z]{3})$/.exec(text)
     if (!m) throw new Error("expected \"<amount> <CCY>\"")
@@ -42,12 +41,12 @@ export class SortedSet<T> {
   }
 }
 
-export const sortedSet = createCollection("SortedSet", <S extends Schema>(item: S) => ({
+export const sortedSet = <S extends Schema>(item: S) => createCollection({
+  name: SortedSet,
   items: item,
-  match: (v: unknown) => v instanceof SortedSet,
-  toItems: (v: SortedSet<Infer<S>>) => v.items,
-  fromItems: (items: Infer<S>[]) => new SortedSet(items),
-}))
+  fromItems: (items) => new SortedSet(items),
+  toItems: (v) => v.items,
+})
 
 export const registry = { Money: money, Note: note, SortedSet: sortedSet }
 

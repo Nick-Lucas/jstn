@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { JSTN, JSTNError, array, createCollection, map, set, union } from "../../src/index.ts"
-import type { Infer, Node, Schema } from "../../src/index.ts"
-import { collectionInfo } from "../../src/types/collection.ts"
+import type { Node } from "../../src/index.ts"
 import { SortedSet, sortedSet } from "../support/fixtures.ts"
 
 function fails(run: () => unknown): JSTNError {
@@ -171,25 +170,25 @@ describe("custom collection", () => {
     )
   })
 
-  const failing = createCollection("SortedSet", <S extends Schema>(item: S) => ({
-    items: item,
-    match: (v: unknown) => v instanceof SortedSet,
-    toItems: (): number[] => {
-      throw new Error("no items")
-    },
+  const failing = createCollection({
+    name: SortedSet,
+    items: Number,
     fromItems: (): SortedSet<number> => {
       throw new Error("bad items")
     },
-  }))
+    toItems: (): number[] => {
+      throw new Error("no items")
+    },
+  })
 
   it("wraps a throwing fromItems with its cause", () => {
-    const error = fails(() => failing(Number).decode({ kind: "list", tag: "SortedSet", items: [num(1)], pos }, ["scores"]))
+    const error = fails(() => failing.decode({ kind: "list", tag: "SortedSet", items: [num(1)], pos }, ["scores"]))
     expect(error.message).toBe("$.scores: invalid SortedSet<number>: bad items (line 1, column 5)")
     expect((error.cause as Error).message).toBe("bad items")
   })
 
   it("wraps a throwing toItems", () => {
-    expect(fails(() => failing(Number).encode(new SortedSet([1]), ["scores"])).message).toBe("$.scores: cannot stringify SortedSet<number>: no items")
+    expect(fails(() => failing.encode(new SortedSet([1]), ["scores"])).message).toBe("$.scores: cannot stringify SortedSet<number>: no items")
   })
 
   it("is named SortedSet<number>", () => {
@@ -204,39 +203,53 @@ describe("custom collection", () => {
   })
 })
 
-describe("createCollection validation", () => {
-  const define = <S extends Schema>(item: S) => ({
-    items: item,
-    match: () => true,
-    toItems: (v: Infer<S>[]) => v,
-    fromItems: (items: Infer<S>[]) => items,
-  })
+describe("createCollection", () => {
+  const spec = { match: Array.isArray, fromItems: (items: number[]) => items, toItems: (v: number[]) => v }
 
   it.each(["null", "number", "NaN", "", "a b", "1x"])("rejects the name %o", (name) => {
-    expect(fails(() => createCollection(name, define)).message).toBe(`$: invalid type name ${JSON.stringify(name)}`)
+    expect(fails(() => createCollection({ name, items: Number, ...spec })).message).toBe(`$: invalid type name ${JSON.stringify(name)}`)
   })
 
-  it("rejects a define with no parameters", () => {
-    const error = fails(() => createCollection("X", (() => define(Number)) as unknown as typeof define))
-    expect(error.message).toBe("$: createCollection(\"X\") define must declare at least one parameter")
+  it("takes its tag from a class name and matches instances by default", () => {
+    class Bag {
+      items: number[]
+      constructor(items: number[]) {
+        this.items = items
+      }
+    }
+    const type = createCollection({ name: Bag, items: Number, fromItems: (items) => new Bag(items), toItems: (v) => v.items })
+    expect(type.name).toBe("Bag<number>")
+    expect(JSTN.stringify(new Bag([1, 2]), type)).toBe("Bag[1,2]")
+    expect(JSTN.parse("Bag[1, 2]", type)).toStrictEqual(new Bag([1, 2]))
+    expect(fails(() => JSTN.stringify([1, 2] as unknown as Bag, type)).message).toBe("$: expected Bag<number>, got array")
   })
-})
 
-describe("collectionInfo", () => {
-  it.each([
-    ["set", set, { name: "Set", arity: 1 }],
-    ["map", map, { name: "Map", arity: 2 }],
-    ["sortedSet", sortedSet, { name: "SortedSet", arity: 1 }],
-  ])("describes %s", (_, fn, info) => {
-    expect(collectionInfo(fn)).toStrictEqual(info)
+  it("lets an explicit match override the class default", () => {
+    const type = createCollection({ name: Array, items: Number, match: (v) => Array.isArray(v) && v.length > 0, ...{ fromItems: spec.fromItems, toItems: spec.toItems } })
+    expect(JSTN.stringify([1], type)).toBe("Array[1]")
+    expect(fails(() => JSTN.stringify([], type)).message).toBe("$: expected Array<number>, got array")
   })
 
-  it.each([
-    ["array", array],
-    ["Number", Number],
-    ["an arrow function", () => set(Number)],
-    ["a non-function", { name: "Set" }],
-  ])("returns undefined for %s", (_, fn) => {
-    expect(collectionInfo(fn)).toBeUndefined()
+  it("rejects an anonymous class", () => {
+    const anonymous = (() => class {})()
+    expect(fails(() => createCollection({ name: anonymous, items: Number, fromItems: () => new anonymous(), toItems: () => [] })).message).toBe("$: invalid type name \"\"")
+  })
+
+  it("rejects a string name with no match at runtime", () => {
+    const loose = { name: "Bag", items: Number, fromItems: spec.fromItems, toItems: spec.toItems } as unknown as Parameters<typeof createCollection>[0]
+    expect(fails(() => createCollection(loose)).message).toBe("$: \"Bag\" needs a match function")
+  })
+
+  it("treats an items list as type arguments and pairs as items", () => {
+    const pairs = createCollection({ name: "Pairs", items: [String, Number], ...spec, fromItems: (items) => items, toItems: (v) => v })
+    expect(pairs.name).toBe("Pairs<string, number>")
+    expect(JSTN.stringify([["a", 1]], pairs)).toBe("Pairs[[\"a\",1]]")
+    expect(fails(() => JSTN.parse("Pairs[[\"a\"]]", pairs)).message).toBe("$[0]: expected 2 items, got 1 (line 1, column 7)")
+  })
+
+  it("builds a fixed collection with no factory", () => {
+    const bag = createCollection({ name: "Bag", items: { a: Number }, ...spec, fromItems: (items) => items, toItems: (v) => v })
+    expect(bag.name).toBe("Bag<{ a: number }>")
+    expect(JSTN.parse("Bag[{ a: 1 }]", bag)).toStrictEqual([{ a: 1 }])
   })
 })

@@ -9,6 +9,7 @@ export class JSTNError extends Error {
   override readonly name = "JSTNError"
   readonly reason: string
   readonly path: string
+  readonly segments: Path
   readonly line: number | undefined
   readonly column: number | undefined
 
@@ -18,6 +19,7 @@ export class JSTNError extends Error {
     super(`${where}: ${reason}${suffix}`, options)
     this.reason = reason
     this.path = where
+    this.segments = Object.freeze([...path])
     this.line = pos?.line
     this.column = pos?.column
   }

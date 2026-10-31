@@ -1,3 +1,5 @@
+import { standardProps, type StandardSchemaV1Props } from "./standard.ts"
+
 export const TYPE: unique symbol = Symbol("jstn.type")
 export const OPTIONAL: unique symbol = Symbol("jstn.optional")
 
@@ -21,6 +23,7 @@ export interface Type<out T> {
   readonly name: string
   encode(value: unknown, path: Path): Node
   decode(node: Node, path: Path): T
+  readonly "~standard": StandardSchemaV1Props<T>
 }
 
 export interface Optional<out T> {
@@ -60,7 +63,7 @@ export function defineType<T>(
   encode: (value: unknown, path: Path) => Node,
   decode: (node: Node, path: Path) => T,
 ): Type<T> {
-  return Object.freeze({ [TYPE]: true as const, name, encode, decode })
+  return Object.freeze({ [TYPE]: true as const, name, encode, decode, "~standard": standardProps<T>(encode) })
 }
 
 export function isType(value: unknown): value is Type<unknown> {
