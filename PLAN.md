@@ -937,7 +937,7 @@ test/
   laws.property.test.ts      round trip, canonical output, name law, total parse, is/stringify agreement
   infer.test-d.ts            type-level tests for Infer and the API signatures
   compile-errors.test.ts     runs tsc on snippets that must not compile, such as JSTN.stringify("x", {})
-  readme.test.ts             README code blocks parse and round-trip
+  docs.test.ts               README and docs/ code blocks parse, round-trip and type-check
 ```
 
 ### Tooling
@@ -1412,33 +1412,33 @@ Properties, each with `numRuns` set to 300:
 5. **Agreement:** for an arbitrary value and an arbitrary second schema, `is(v, t2) === (stringify does not throw)`. `is(parse(...), t)` is always true.
 6. **Validate:** a generated value is accepted. Replacing a leaf with a value of a different kind is rejected, and the error path points at that leaf. This is done with a path-aware mutation in `arbitraries.ts`.
 
-### test/readme.test.ts (unit C)
+### test/docs.test.ts (unit C)
 
-1. The test extracts the fenced blocks from `README.md`, which it locates relative to the test file, not the working directory.
-2. Every ```` ```jstn-schema ```` block parses with `{ types: registry }`.
-3. Every ```` ```jstn ```` block parses against the nearest preceding `jstn-schema` block, and `parse(stringify(parse(x)))` is stable.
-4. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed.
-5. At least one `jstn-schema` block and one `jstn` block exist.
+1. The test extracts the fenced blocks from `README.md` and every `docs/*.md` file, which it locates relative to the test file, not the working directory.
+2. Every ```` ```jstn-schema ```` block, and every hidden `<!-- jstn-schema ... -->` comment, parses with the fixture registry plus a `URL` type.
+3. Every ```` ```jstn ```` block parses against the nearest preceding schema in the same file, and `parse(stringify(parse(x)))` is stable. A single-line block must equal the compact `stringify` output exactly.
+4. Every ```` ```ts ```` block is written to a temporary project that maps `jstn` to `src/index.ts` and adds the `dom` lib, and `tsc` must report no errors in it. A ```` ```ts nocheck ```` block is skipped.
+5. Grammar listings and invalid examples use ```` ```ebnf ```` or ```` ```text ````, so they are not executed. Only `ts`, `jstn`, `jstn-schema`, `ebnf`, `text` and `sh` fences are allowed.
 
 ---
 
-## 9. README.md outline (unit C)
+## 9. Documentation outline (unit C)
 
-1. What JSTN is: two parts, schemas and serialisation. A 10-line quick start.
-2. Data format by example: keys, strings, numbers including `NaN`, `-0` and `123n`, comments, trailing commas, tags `Date(...)`, `Set[...]` and `Map[[k, v]]`, and custom tags.
-3. Schemas:
-   - the builder API, with every export and shorthand
-   - optional keys
-   - strict keys
-   - union ordering
-4. jstn-schema text language: the grammar, the registry, generics.
-5. Custom types and collections: `createType` with a string or class `name`, and how `T` is inferred. `createCollection`, including the rule to write `fromItems` before `toItems`, generic wrapper functions, and an `items` array for several type arguments.
-6. Standard Schema: every `Type` has `"~standard"`, and its issues use `reason` and `segments`.
-7. Validation: `validate` and `is`.
-8. Errors: `JSTNError` fields, including `segments`, and the message format.
-9. Output rules: `space`, the inline rule, key quoting, payload quoting.
-10. The reference grammars in EBNF (§4.1–4.3), copied verbatim.
-11. Requirements: Node 26 or later, TypeScript 5.4 or later for consumers (because of `NoInfer`), and ESM only.
+`README.md` is a getting-started guide and API reference. It explains little and links to `docs/` for details:
+
+1. A one-paragraph pitch and a data sample.
+2. Getting started: install from GitHub, requirements, a quick start, and an example error.
+3. A cheat sheet: TypeScript schema, schema text and data for every type.
+4. Practical examples: a config file, HTTP with dates and bigints, localStorage, untrusted input, custom types, custom collections, text schemas, and Standard Schema.
+5. API reference: one short entry per export.
+6. Links to the docs and the licence.
+
+`docs/` holds the technical detail:
+
+- `data-format.md`: syntax, payload quoting, output rules and limits.
+- `schema-language.md`: schema text rules, the registry, static types and the name law.
+- `validation.md`: schemas, strict objects, unions, `is` narrowing, `createType` and `createCollection` inference, errors and paths, and Standard Schema.
+- `grammar.md`: the reference grammars in EBNF (§4.1–4.3) and the details that apply on top.
 
 ---
 
@@ -1479,7 +1479,7 @@ Tests that must pass: `test/syntax/read-data.test.ts`, `test/syntax/write-data.t
 
 ### Unit C: Schema text, integration and docs
 
-It owns `src/syntax/read-schema.ts`, `README.md`, `test/support/arbitraries.ts`, `test/syntax/read-schema.test.ts`, `test/api.test.ts`, `test/errors.test.ts`, `test/laws.property.test.ts` and `test/readme.test.ts`.
+It owns `src/syntax/read-schema.ts`, `README.md`, `test/support/arbitraries.ts`, `test/syntax/read-schema.test.ts`, `test/api.test.ts`, `test/errors.test.ts`, `test/laws.property.test.ts` and `test/docs.test.ts`, plus `docs/`.
 
 Its tests must pass after A and B are merged. C is also responsible for the final `npm test` passing with everything merged.
 

@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "check": "tsc --noEmit",
     "test": "tsc --noEmit && vitest run"
   },
